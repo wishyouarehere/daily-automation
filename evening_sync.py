@@ -52,7 +52,7 @@ def get_completed_tasks(date: datetime) -> list[dict]:
 
         # Sync API로 완료 항목 조회 (REST API v2는 완료 항목 미지원)
         resp = requests.get(
-            "https://api.todoist.com/sync/v9/items/completed/get_all",
+            "https://api.todoist.com/api/v1/tasks/completed",
             headers=headers,
             params={"since": since, "until": until, "limit": 200},
             timeout=15,
@@ -61,8 +61,10 @@ def get_completed_tasks(date: datetime) -> list[dict]:
         items = resp.json().get("items", [])
 
         # 프로젝트 ID → 이름 매핑
-        proj_resp = requests.get("https://api.todoist.com/rest/v2/projects", headers=headers, timeout=10)
-        proj_map = {p["id"]: p["name"] for p in proj_resp.json()} if proj_resp.ok else {}
+        proj_resp = requests.get("https://api.todoist.com/api/v1/projects", headers=headers, timeout=10)
+        proj_data = proj_resp.json()
+        proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
+        proj_map = {p["id"]: p["name"] for p in proj_list} if proj_resp.ok else {}
 
         return [
             {

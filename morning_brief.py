@@ -9,6 +9,7 @@ import os
 import sys
 import requests
 from datetime import datetime, timedelta, timezone
+from html import escape
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -67,7 +68,7 @@ def get_weather() -> str:
         icon_map = {"맑음": "☀️", "구름": "⛅", "비": "🌧", "눈": "❄️", "안개": "🌫", "흐림": "☁️"}
         icon = next((v for k, v in icon_map.items() if k in desc), "🌤")
 
-        return f"{icon} 오늘 {WEATHER_CITY} 날씨: {desc} {temp_now}°C / 최저 {temp_min}°C 최고 {temp_max}°C"
+        return f"{icon} {escape(desc)} {temp_now}°C  🔻{temp_min} 🔺{temp_max}"
     except Exception as e:
         send_error("날씨 조회", e)
         return "🌤 날씨 정보를 가져오지 못했습니다."
@@ -110,7 +111,7 @@ def format_events(events: list[dict]) -> list[str]:
             time_str = dt.strftime("%H:%M")
         else:
             time_str = "종일"
-        lines.append(f"  {time_str} {e.get('summary', '(제목 없음)')}")
+        lines.append(f"  {time_str} {escape(e.get('summary', '(제목 없음)'))}")
     return lines
 
 
@@ -135,29 +136,42 @@ def get_schedule_section() -> tuple[str, str]:
 def get_todoist_today() -> str:
     try:
         headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
-        resp = requests.get("https://api.todoist.com/rest/v2/tasks", headers=headers, timeout=10)
-        resp.raise_for_status()
-        tasks = resp.json()
-
         today_str = datetime.now(KST).strftime("%Y-%m-%d")
-        today_tasks = []
-        for t in tasks:
-            due = t.get("due")
-            if due and due.get("date") == today_str:
-                today_tasks.append(t)
+        # 전체 태스크를 받아서 오늘 due인 것만 필터링
+        all_tasks = []
+        cursor = None
+        while True:
+            params = {"limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            resp = requests.get("https://api.todoist.com/api/v1/tasks", headers=headers, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            batch = data.get("results", [])
+            all_tasks.extend(batch)
+            cursor = data.get("next_cursor")
+            if not cursor:
+                break
+
+        today_tasks = [
+            t for t in all_tasks
+            if t.get("due") and t["due"].get("date", "").startswith(today_str)
+        ]
 
         if not today_tasks:
             return "  오늘 할 일 없음"
 
         # 프로젝트 ID → 이름 매핑
-        proj_resp = requests.get("https://api.todoist.com/rest/v2/projects", headers=headers, timeout=10)
-        proj_map = {p["id"]: p["name"] for p in proj_resp.json()} if proj_resp.ok else {}
+        proj_resp = requests.get("https://api.todoist.com/api/v1/projects", headers=headers, timeout=10)
+        proj_data = proj_resp.json()
+        proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
+        proj_map = {p["id"]: p["name"] for p in proj_list} if proj_resp.ok else {}
 
         lines = []
         for t in today_tasks:
-            proj_name = proj_map.get(t.get("project_id"), "")
+            proj_name = escape(proj_map.get(t.get("project_id"), ""))
             label = f"[{proj_name}] " if proj_name else ""
-            lines.append(f"  · {label}{t['content']}")
+            lines.append(f"  · {label}{escape(t['content'])}")
 
         return "\n".join(lines)
     except Exception as e:
@@ -168,7 +182,7 @@ def get_todoist_today() -> str:
 # ── 메인 ──────────────────────────────────────────────────────────
 def main():
     now = datetime.now(KST)
-    date_str = now.strftime("%Y년 %m월 %d일 (%a)")
+    date_str = now.strftime("%y/%m/%d/%a").upper()
 
     weather = get_weather()
     today_sched, tomorrow_sched = get_schedule_section()
