@@ -266,7 +266,10 @@ def get_claude_comment(index_text: str, completed: list[str]) -> str:
             max_tokens=100,
             messages=[{"role": "user", "content": prompt}],
         )
-        return f"  {message.content[0].text.strip()}"
+        # 마크다운 제거 (**, *, __, #, ` 등)
+        text = message.content[0].text.strip()
+        text = re.sub(r"[*_`#]+", "", text).strip()
+        return f"  {text}"
     except Exception as e:
         send_error("Claude 한마디 생성", e)
         return "  (생성 실패)"
@@ -309,7 +312,7 @@ def get_daniel_section() -> str:
 ✅ <b>어제 완료</b>
 {done_text}
 
-💡 <b>Claude 한마디</b>
+🔍 <b>오늘의 관전 포인트</b>
 {claude_comment}"""
     except Exception as e:
         send_error("다니엘프로젝트 브리핑", e)
@@ -319,7 +322,8 @@ def get_daniel_section() -> str:
 # ── 메인 ──────────────────────────────────────────────────────────
 def main():
     now = datetime.now(KST)
-    date_str = now.strftime("%y/%m/%d/%a").upper()
+    day_kr = "월화수목금토일"[now.weekday()]
+    date_str = now.strftime(f"%y/%m/%d/{day_kr}")
 
     weather = get_weather()
     today_sched, tomorrow_sched = get_schedule_section()
