@@ -126,8 +126,12 @@ def main():
     context_text = fetch_github_file(WF_REPO, "_CONTEXT.md")
 
     review_text, week_str = generate_weekly_review(daily_text, index_text, context_text)
+    week_num = now.isocalendar()[1]
+    date_range_start = now - timedelta(days=now.weekday())
+    date_range_end   = date_range_start + timedelta(days=4)
+    week_label = f"{date_range_start.strftime('%-m/%-d')}~{date_range_end.strftime('%-m/%-d')}"
 
-    message = f"""📊 <b>주간 리뷰 — {week_str}</b>
+    message = f"""📊 <b>주간 리뷰 — {now.month}월 {week_label}</b>
 
 {review_text}"""
 
