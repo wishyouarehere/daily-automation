@@ -1,18 +1,21 @@
 """
 아침 브리핑 텔레그램 봇
-매일 07:30 KST에 날씨 / 오늘 일정 / 할 일 / 내일 일정을 텔레그램으로 전송합니다.
+매일 07:30 KST에 날씨 / 오늘 일정 / 할 일 / 내일 일정 / 다니엘프로젝트 브리핑을 전송합니다.
 
 직접 실행: python morning_brief.py
 """
 
 import os
+import re
 import sys
 import requests
 from datetime import datetime, timedelta, timezone
 from html import escape
+from pathlib import Path
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+import anthropic
 
 load_dotenv()
 
@@ -26,6 +29,17 @@ GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 CALENDAR_ID = os.environ["GOOGLE_CALENDAR_ID"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+
+VAULT_DAILY_DIR = Path(
+    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay"
+    "/10-Projects/다니엘프로젝트/Daily"
+)
+INDEX_PATH = Path(
+    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay"
+    "/10-Projects/다니엘프로젝트/_INDEX.md"
+)
+DANIEL_DEADLINE = datetime(2026, 7, 20, tzinfo=timezone(timedelta(hours=9)))
 
 KST = timezone(timedelta(hours=9))
 
@@ -38,12 +52,11 @@ def send_telegram(text: str) -> None:
 
 
 def send_error(context: str, error: Exception) -> None:
-    """에러 발생 시 텔레그램으로 알림"""
     msg = f"⚠️ <b>[morning_brief 오류]</b>\n{context}\n<code>{type(error).__name__}: {error}</code>"
     try:
         send_telegram(msg)
     except Exception:
-        pass  # 텔레그램 자체가 실패하면 로그만 남김
+        pass
     print(f"ERROR [{context}]: {error}", file=sys.stderr)
 
 
@@ -54,17 +67,14 @@ def get_weather() -> str:
         params = {"q": WEATHER_CITY, "appid": OWM_KEY, "units": "metric", "lang": "kr", "cnt": 8}
         data = requests.get(url, params=params, timeout=10).json()
 
-        # 현재 날씨 (첫 번째 항목)
         current = data["list"][0]
         desc = current["weather"][0]["description"]
         temp_now = round(current["main"]["temp"])
 
-        # 오늘 최저/최고 (8개 항목 = 24시간)
         temps = [item["main"]["temp"] for item in data["list"]]
         temp_max = round(max(temps))
         temp_min = round(min(temps))
 
-        # 날씨 아이콘 매핑
         icon_map = {"맑음": "☀️", "구름": "⛅", "비": "🌧", "눈": "❄️", "안개": "🌫", "흐림": "☁️"}
         icon = next((v for k, v in icon_map.items() if k in desc), "🌤")
 
@@ -88,7 +98,6 @@ def get_calendar_service():
 
 
 def get_events(service, date: datetime) -> list[dict]:
-    """특정 날짜의 캘린더 이벤트 조회"""
     start = date.replace(hour=0, minute=0, second=0, microsecond=0)
     end = date.replace(hour=23, minute=59, second=59, microsecond=0)
     result = service.events().list(
@@ -106,7 +115,6 @@ def format_events(events: list[dict]) -> list[str]:
     for e in events:
         start = e["start"].get("dateTime", e["start"].get("date", ""))
         if "T" in start:
-            # 시간 있는 이벤트
             dt = datetime.fromisoformat(start).astimezone(KST)
             time_str = dt.strftime("%H:%M")
         else:
@@ -116,7 +124,6 @@ def format_events(events: list[dict]) -> list[str]:
 
 
 def get_schedule_section() -> tuple[str, str]:
-    """오늘/내일 일정 섹션 반환 (today_text, tomorrow_text)"""
     try:
         service = get_calendar_service()
         now = datetime.now(KST)
@@ -132,12 +139,12 @@ def get_schedule_section() -> tuple[str, str]:
         return "  캘린더 정보를 가져오지 못했습니다.", "  캘린더 정보를 가져오지 못했습니다."
 
 
-# ── Todoist ───────────────────────────────────────────────────────
+# ── Todoist 오늘 할 일 ────────────────────────────────────────────
 def get_todoist_today() -> str:
     try:
         headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
         today_str = datetime.now(KST).strftime("%Y-%m-%d")
-        # 전체 태스크를 받아서 오늘 due인 것만 필터링
+
         all_tasks = []
         cursor = None
         while True:
@@ -147,8 +154,7 @@ def get_todoist_today() -> str:
             resp = requests.get("https://api.todoist.com/api/v1/tasks", headers=headers, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-            batch = data.get("results", [])
-            all_tasks.extend(batch)
+            all_tasks.extend(data.get("results", []))
             cursor = data.get("next_cursor")
             if not cursor:
                 break
@@ -161,7 +167,6 @@ def get_todoist_today() -> str:
         if not today_tasks:
             return "  오늘 할 일 없음"
 
-        # 프로젝트 ID → 이름 매핑
         proj_resp = requests.get("https://api.todoist.com/api/v1/projects", headers=headers, timeout=10)
         proj_data = proj_resp.json()
         proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
@@ -179,6 +184,174 @@ def get_todoist_today() -> str:
         return "  할 일 정보를 가져오지 못했습니다."
 
 
+# ── Todoist 어제 완료 항목 ────────────────────────────────────────
+def get_todoist_completed_yesterday() -> list[str]:
+    try:
+        headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+        now = datetime.now(KST)
+        yesterday = now - timedelta(days=1)
+        since = yesterday.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
+        until = yesterday.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
+
+        resp = requests.get(
+            "https://api.todoist.com/api/v1/tasks/completed/get_all",
+            headers=headers,
+            params={"since": since, "until": until, "limit": 50},
+            timeout=10,
+        )
+        if not resp.ok:
+            return []
+
+        items = resp.json().get("items", [])
+        return [escape(item["content"]) for item in items]
+    except Exception:
+        return []
+
+
+# ── WorkFlowy 어제 Daily 파일 읽기 ───────────────────────────────
+def get_yesterday_daily_content() -> str:
+    try:
+        now = datetime.now(KST)
+        yesterday = now - timedelta(days=1)
+
+        # 날짜 패턴 다양하게 시도 (WorkFlowy 파일명이 일정하지 않음)
+        patterns = [
+            yesterday.strftime("%Y-%m-%d"),          # 2026-06-02
+            yesterday.strftime("%-m-%-d"),            # 6-2
+            f"{yesterday.month}-{yesterday.day}",     # 6-2
+        ]
+
+        for f in sorted(VAULT_DAILY_DIR.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
+            stem = f.stem
+            if any(p in stem for p in patterns):
+                content = f.read_text(encoding="utf-8")
+                # frontmatter 제거
+                content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL)
+                return content.strip()
+
+        # 패턴 매칭 실패 시 가장 최근 파일
+        files = sorted(VAULT_DAILY_DIR.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
+        if files:
+            content = files[0].read_text(encoding="utf-8")
+            content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL)
+            return content.strip()
+
+        return ""
+    except Exception:
+        return ""
+
+
+# ── _INDEX.md 에서 미결 항목 파싱 ────────────────────────────────
+def get_index_pending() -> list[str]:
+    try:
+        text = INDEX_PATH.read_text(encoding="utf-8")
+        # [ ] 체크박스 항목만 추출
+        items = re.findall(r"- \[ \] (.+)", text)
+        return [escape(item.strip()) for item in items]
+    except Exception:
+        return []
+
+
+# ── _INDEX.md 에서 이번 주 주요 일정 파싱 ────────────────────────
+def get_index_weekly() -> list[str]:
+    try:
+        text = INDEX_PATH.read_text(encoding="utf-8")
+        # "이번 주 포커스" 섹션의 bullet 항목 추출
+        section = re.search(r"이번 주 포커스\n(.*?)(?=\n#|\n---|\Z)", text, re.DOTALL)
+        if not section:
+            return []
+        lines = [
+            escape(l.lstrip("- ·").strip())
+            for l in section.group(1).splitlines()
+            if l.strip().startswith(("-", "·", "*"))
+        ]
+        return lines
+    except Exception:
+        return []
+
+
+# ── Claude 한마디 생성 ────────────────────────────────────────────
+def get_claude_comment(daily_content: str, completed: list[str]) -> str:
+    try:
+        if not daily_content and not completed:
+            return "  어제 기록을 찾을 수 없습니다."
+
+        completed_text = "\n".join(f"- {c}" for c in completed) if completed else "없음"
+        prompt = f"""당신은 CPO(최고제품책임자) Jay의 업무 어시스턴트입니다.
+아래는 Jay의 어제 업무 기록입니다. 딱 한 문장으로 핵심 패턴이나 오늘 주목해야 할 점을 짚어주세요.
+한국어로, 간결하게, 조언보다는 날카로운 관찰로 작성해주세요.
+
+[WorkFlowy 데일리 기록]
+{daily_content[:1500]}
+
+[Todoist 완료 항목]
+{completed_text}"""
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return f"  {message.content[0].text.strip()}"
+    except Exception as e:
+        send_error("Claude 한마디 생성", e)
+        return "  (생성 실패)"
+
+
+# ── 다니엘프로젝트 브리핑 섹션 ───────────────────────────────────
+def get_daniel_section() -> str:
+    try:
+        now = datetime.now(KST)
+        d_day = (DANIEL_DEADLINE - now).days
+
+        # 어제 완료 항목 (Todoist + WorkFlowy 머지)
+        todoist_done = get_todoist_completed_yesterday()
+        daily_content = get_yesterday_daily_content()
+
+        # WorkFlowy daily에서 완료 항목 추출 (- 로 시작하는 기록 라인)
+        wf_done = []
+        for line in daily_content.splitlines():
+            stripped = line.lstrip()
+            if stripped.startswith("- ") and len(stripped) > 10:
+                item = stripped[2:].strip()
+                # 중복 제거 (Todoist에 이미 있으면 skip)
+                if not any(item in t or t in item for t in todoist_done):
+                    wf_done.append(escape(item))
+
+        all_done = [f"  · {t}" for t in todoist_done] + [f"  · {w}" for w in wf_done[:3]]
+        done_text = "\n".join(all_done) if all_done else "  기록 없음"
+
+        # 미결 항목 (_INDEX.md 파싱)
+        pending = get_index_pending()
+        pending_text = "\n".join(f"  · {p}" for p in pending[:4]) if pending else "  없음"
+
+        # 이번 주 주요 일정 (_INDEX.md 파싱)
+        weekly = get_index_weekly()
+        weekly_text = "\n".join(f"  · {w}" for w in weekly[:3]) if weekly else "  없음"
+
+        # Claude 한마디
+        claude_comment = get_claude_comment(daily_content, todoist_done)
+
+        return f"""━━━━━━━━━━━━━━━
+🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
+
+🔴 <b>오늘 포커스 (미결)</b>
+{pending_text}
+
+📅 <b>이번 주 주요 일정</b>
+{weekly_text}
+
+✅ <b>어제 완료</b>
+{done_text}
+
+💡 <b>Claude 한마디</b>
+{claude_comment}"""
+    except Exception as e:
+        send_error("다니엘프로젝트 브리핑", e)
+        return "━━━━━━━━━━━━━━━\n🏢 다니엘프로젝트 브리핑을 가져오지 못했습니다."
+
+
 # ── 메인 ──────────────────────────────────────────────────────────
 def main():
     now = datetime.now(KST)
@@ -187,11 +360,13 @@ def main():
     weather = get_weather()
     today_sched, tomorrow_sched = get_schedule_section()
     todos = get_todoist_today()
+    daniel = get_daniel_section()
 
     message = f"""📋 <b>아침 브리핑 — {date_str}</b>
 
 🌤 {weather}
 
+━━━━━━━━━━━━━━━
 📅 <b>오늘 일정</b>
 {today_sched}
 
@@ -199,7 +374,9 @@ def main():
 {todos}
 
 📌 <b>내일 일정 미리보기</b>
-{tomorrow_sched}"""
+{tomorrow_sched}
+
+{daniel}"""
 
     send_telegram(message)
     print("✅ 아침 브리핑 전송 완료")
