@@ -30,15 +30,11 @@ GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 CALENDAR_ID = os.environ["GOOGLE_CALENDAR_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 
-VAULT_DAILY_DIR = Path(
-    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay"
-    "/10-Projects/다니엘프로젝트/Daily"
-)
-INDEX_PATH = Path(
-    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay"
-    "/10-Projects/다니엘프로젝트/_INDEX.md"
-)
+# workflowy-sync 레포의 _INDEX.md (GitHub API)
+INDEX_REPO = "wishyouarehere/workflowy-sync"
+INDEX_FILE = "_INDEX.md"
 DANIEL_DEADLINE = datetime(2026, 7, 20, tzinfo=timezone(timedelta(hours=9)))
 
 KST = timezone(timedelta(hours=9))
@@ -208,83 +204,60 @@ def get_todoist_completed_yesterday() -> list[str]:
         return []
 
 
-# ── WorkFlowy 어제 Daily 파일 읽기 ───────────────────────────────
-def get_yesterday_daily_content() -> str:
+# ── GitHub에서 _INDEX.md 읽기 ────────────────────────────────────
+def fetch_index_from_github() -> str:
     try:
-        now = datetime.now(KST)
-        yesterday = now - timedelta(days=1)
-
-        # 날짜 패턴 다양하게 시도 (WorkFlowy 파일명이 일정하지 않음)
-        patterns = [
-            yesterday.strftime("%Y-%m-%d"),          # 2026-06-02
-            yesterday.strftime("%-m-%-d"),            # 6-2
-            f"{yesterday.month}-{yesterday.day}",     # 6-2
-        ]
-
-        for f in sorted(VAULT_DAILY_DIR.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
-            stem = f.stem
-            if any(p in stem for p in patterns):
-                content = f.read_text(encoding="utf-8")
-                # frontmatter 제거
-                content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL)
-                return content.strip()
-
-        # 패턴 매칭 실패 시 가장 최근 파일
-        files = sorted(VAULT_DAILY_DIR.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
-        if files:
-            content = files[0].read_text(encoding="utf-8")
-            content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL)
-            return content.strip()
-
-        return ""
-    except Exception:
+        import base64
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        resp = requests.get(
+            f"https://api.github.com/repos/{INDEX_REPO}/contents/{INDEX_FILE}",
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        content = base64.b64decode(resp.json()["content"]).decode("utf-8")
+        return content
+    except Exception as e:
+        send_error("_INDEX.md GitHub 조회", e)
         return ""
 
 
 # ── _INDEX.md 에서 미결 항목 파싱 ────────────────────────────────
-def get_index_pending() -> list[str]:
-    try:
-        text = INDEX_PATH.read_text(encoding="utf-8")
-        # [ ] 체크박스 항목만 추출
-        items = re.findall(r"- \[ \] (.+)", text)
-        return [escape(item.strip()) for item in items]
-    except Exception:
-        return []
+def get_index_pending(text: str) -> list[str]:
+    items = re.findall(r"- \[ \] (.+)", text)
+    return [escape(item.strip()) for item in items]
 
 
 # ── _INDEX.md 에서 이번 주 주요 일정 파싱 ────────────────────────
-def get_index_weekly() -> list[str]:
-    try:
-        text = INDEX_PATH.read_text(encoding="utf-8")
-        # "이번 주 포커스" 섹션의 bullet 항목 추출
-        section = re.search(r"이번 주 포커스\n(.*?)(?=\n#|\n---|\Z)", text, re.DOTALL)
-        if not section:
-            return []
-        lines = [
-            escape(l.lstrip("- ·").strip())
-            for l in section.group(1).splitlines()
-            if l.strip().startswith(("-", "·", "*"))
-        ]
-        return lines
-    except Exception:
+def get_index_weekly(text: str) -> list[str]:
+    section = re.search(r"이번 주 포커스\n(.*?)(?=\n#|\n---|\Z)", text, re.DOTALL)
+    if not section:
         return []
+    return [
+        escape(l.lstrip("- ·").strip())
+        for l in section.group(1).splitlines()
+        if l.strip().startswith(("-", "·", "*"))
+    ]
 
 
 # ── Claude 한마디 생성 ────────────────────────────────────────────
-def get_claude_comment(daily_content: str, completed: list[str]) -> str:
+def get_claude_comment(index_text: str, completed: list[str]) -> str:
     try:
-        if not daily_content and not completed:
+        if not index_text and not completed:
             return "  어제 기록을 찾을 수 없습니다."
 
         completed_text = "\n".join(f"- {c}" for c in completed) if completed else "없음"
         prompt = f"""당신은 CPO(최고제품책임자) Jay의 업무 어시스턴트입니다.
-아래는 Jay의 어제 업무 기록입니다. 딱 한 문장으로 핵심 패턴이나 오늘 주목해야 할 점을 짚어주세요.
+아래는 Jay의 현재 프로젝트 현황과 어제 완료 항목입니다. 딱 한 문장으로 핵심 패턴이나 오늘 주목해야 할 점을 짚어주세요.
 한국어로, 간결하게, 조언보다는 날카로운 관찰로 작성해주세요.
 
-[WorkFlowy 데일리 기록]
-{daily_content[:1500]}
+[프로젝트 현황 (_INDEX.md)]
+{index_text[:1500]}
 
-[Todoist 완료 항목]
+[Todoist 어제 완료 항목]
 {completed_text}"""
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -305,33 +278,24 @@ def get_daniel_section() -> str:
         now = datetime.now(KST)
         d_day = (DANIEL_DEADLINE - now).days
 
-        # 어제 완료 항목 (Todoist + WorkFlowy 머지)
+        # _INDEX.md GitHub에서 읽기
+        index_text = fetch_index_from_github()
+
+        # 어제 완료 항목 (Todoist)
         todoist_done = get_todoist_completed_yesterday()
-        daily_content = get_yesterday_daily_content()
-
-        # WorkFlowy daily에서 완료 항목 추출 (- 로 시작하는 기록 라인)
-        wf_done = []
-        for line in daily_content.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("- ") and len(stripped) > 10:
-                item = stripped[2:].strip()
-                # 중복 제거 (Todoist에 이미 있으면 skip)
-                if not any(item in t or t in item for t in todoist_done):
-                    wf_done.append(escape(item))
-
-        all_done = [f"  · {t}" for t in todoist_done] + [f"  · {w}" for w in wf_done[:3]]
+        all_done = [f"  · {escape(t)}" for t in todoist_done]
         done_text = "\n".join(all_done) if all_done else "  기록 없음"
 
         # 미결 항목 (_INDEX.md 파싱)
-        pending = get_index_pending()
+        pending = get_index_pending(index_text)
         pending_text = "\n".join(f"  · {p}" for p in pending[:4]) if pending else "  없음"
 
         # 이번 주 주요 일정 (_INDEX.md 파싱)
-        weekly = get_index_weekly()
+        weekly = get_index_weekly(index_text)
         weekly_text = "\n".join(f"  · {w}" for w in weekly[:3]) if weekly else "  없음"
 
         # Claude 한마디
-        claude_comment = get_claude_comment(daily_content, todoist_done)
+        claude_comment = get_claude_comment(index_text, todoist_done)
 
         return f"""━━━━━━━━━━━━━━━
 🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
