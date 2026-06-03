@@ -254,38 +254,30 @@ def get_claude_comment(index_text: str, context_text: str, daily_text: str, comp
 
         completed_text = "\n".join(f"- {c}" for c in completed) if completed else "없음"
 
-        # 핵심-컨텍스트에서 조직·리스크 핵심만 압축 (토큰 절약)
-        context_summary = ""
-        if context_text:
-            # 팀원 현황 + 주요 리스크 섹션만 추출
-            sections = re.findall(r"(## \d+\..+?)(?=## \d+\.|\Z)", context_text, re.DOTALL)
-            relevant = [s for s in sections if any(k in s for k in ["팀원", "리스크", "데드라인", "위상", "대표"])]
-            context_summary = "\n".join(relevant)[:1000]
-
         prompt = f"""당신은 20년차 CPO 장홍석(Jay)의 업무 어드바이저입니다.
 Jay는 현재 다니엘프로젝트 부대표/CPO로, 7/20 전사 데이원 전환 데드라인을 앞두고 있습니다.
 
-아래 세 가지 정보를 종합해서, 오늘 Jay가 가장 주목해야 할 점을 딱 한 문장으로 짚어주세요.
+아래 정보를 종합해서, 오늘 Jay가 가장 주목해야 할 점을 딱 한 문장으로 짚어주세요.
 - 마크다운 기호 없이 plain text로
 - 조언이 아닌 날카로운 관찰
 - CPO 관점에서 조직·제품·사람 중 하나에 집중
 
-[조직/팀 컨텍스트]
-{context_summary}
+[조직/팀 전체 컨텍스트]
+{context_text}
 
 [현재 프로젝트 현황]
-{index_text[:800]}
+{index_text}
 
 [어제 업무 기록]
-{daily_text[:600]}
+{daily_text}
 
 [Todoist 어제 완료]
 {completed_text}"""
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
+            model="claude-sonnet-4-6",
+            max_tokens=150,
             messages=[{"role": "user", "content": prompt}],
         )
         # 마크다운 제거 (**, *, __, #, ` 등)
