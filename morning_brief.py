@@ -32,9 +32,11 @@ CALENDAR_ID = os.environ["GOOGLE_CALENDAR_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 
-# workflowy-sync 레포의 _INDEX.md (GitHub API)
+# workflowy-sync 레포 파일들 (GitHub API)
 INDEX_REPO = "wishyouarehere/workflowy-sync"
 INDEX_FILE = "_INDEX.md"
+CONTEXT_FILE = "_CONTEXT.md"
+DAILY_FILE = "_DAILY_LATEST.md"
 DANIEL_DEADLINE = datetime(2026, 7, 20, tzinfo=timezone(timedelta(hours=9)))
 
 KST = timezone(timedelta(hours=9))
@@ -204,8 +206,8 @@ def get_todoist_completed_yesterday() -> list[str]:
         return []
 
 
-# ── GitHub에서 _INDEX.md 읽기 ────────────────────────────────────
-def fetch_index_from_github() -> str:
+# ── GitHub에서 파일 읽기 ─────────────────────────────────────────
+def fetch_github_file(filename: str) -> str:
     try:
         import base64
         headers = {
@@ -213,15 +215,16 @@ def fetch_index_from_github() -> str:
             "Accept": "application/vnd.github+json",
         }
         resp = requests.get(
-            f"https://api.github.com/repos/{INDEX_REPO}/contents/{INDEX_FILE}",
+            f"https://api.github.com/repos/{INDEX_REPO}/contents/{filename}",
             headers=headers,
             timeout=10,
         )
+        if resp.status_code == 404:
+            return ""
         resp.raise_for_status()
-        content = base64.b64decode(resp.json()["content"]).decode("utf-8")
-        return content
+        return base64.b64decode(resp.json()["content"]).decode("utf-8")
     except Exception as e:
-        send_error("_INDEX.md GitHub 조회", e)
+        send_error(f"{filename} GitHub 조회", e)
         return ""
 
 
@@ -244,20 +247,39 @@ def get_index_weekly(text: str) -> list[str]:
 
 
 # ── Claude 한마디 생성 ────────────────────────────────────────────
-def get_claude_comment(index_text: str, completed: list[str]) -> str:
+def get_claude_comment(index_text: str, context_text: str, daily_text: str, completed: list[str]) -> str:
     try:
-        if not index_text and not completed:
+        if not index_text and not completed and not daily_text:
             return "  어제 기록을 찾을 수 없습니다."
 
         completed_text = "\n".join(f"- {c}" for c in completed) if completed else "없음"
-        prompt = f"""당신은 CPO(최고제품책임자) Jay의 업무 어시스턴트입니다.
-아래는 Jay의 현재 프로젝트 현황과 어제 완료 항목입니다. 딱 한 문장으로 핵심 패턴이나 오늘 주목해야 할 점을 짚어주세요.
-한국어로, 간결하게, 조언보다는 날카로운 관찰로 작성해주세요.
 
-[프로젝트 현황 (_INDEX.md)]
-{index_text[:1500]}
+        # 핵심-컨텍스트에서 조직·리스크 핵심만 압축 (토큰 절약)
+        context_summary = ""
+        if context_text:
+            # 팀원 현황 + 주요 리스크 섹션만 추출
+            sections = re.findall(r"(## \d+\..+?)(?=## \d+\.|\Z)", context_text, re.DOTALL)
+            relevant = [s for s in sections if any(k in s for k in ["팀원", "리스크", "데드라인", "위상", "대표"])]
+            context_summary = "\n".join(relevant)[:1000]
 
-[Todoist 어제 완료 항목]
+        prompt = f"""당신은 20년차 CPO 장홍석(Jay)의 업무 어드바이저입니다.
+Jay는 현재 다니엘프로젝트 부대표/CPO로, 7/20 전사 데이원 전환 데드라인을 앞두고 있습니다.
+
+아래 세 가지 정보를 종합해서, 오늘 Jay가 가장 주목해야 할 점을 딱 한 문장으로 짚어주세요.
+- 마크다운 기호 없이 plain text로
+- 조언이 아닌 날카로운 관찰
+- CPO 관점에서 조직·제품·사람 중 하나에 집중
+
+[조직/팀 컨텍스트]
+{context_summary}
+
+[현재 프로젝트 현황]
+{index_text[:800]}
+
+[어제 업무 기록]
+{daily_text[:600]}
+
+[Todoist 어제 완료]
 {completed_text}"""
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -281,8 +303,10 @@ def get_daniel_section() -> str:
         now = datetime.now(KST)
         d_day = (DANIEL_DEADLINE - now).days
 
-        # _INDEX.md GitHub에서 읽기
-        index_text = fetch_index_from_github()
+        # GitHub에서 컨텍스트 파일들 읽기
+        index_text   = fetch_github_file(INDEX_FILE)
+        context_text = fetch_github_file(CONTEXT_FILE)
+        daily_text   = fetch_github_file(DAILY_FILE)
 
         # 어제 완료 항목 (Todoist)
         todoist_done = get_todoist_completed_yesterday()
@@ -297,8 +321,8 @@ def get_daniel_section() -> str:
         weekly = get_index_weekly(index_text)
         weekly_text = "\n".join(f"  · {w}" for w in weekly[:3]) if weekly else "  없음"
 
-        # Claude 한마디
-        claude_comment = get_claude_comment(index_text, todoist_done)
+        # 어드바이저 노트
+        claude_comment = get_claude_comment(index_text, context_text, daily_text, todoist_done)
 
         return f"""━━━━━━━━━━━━━━━
 🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
@@ -312,7 +336,7 @@ def get_daniel_section() -> str:
 ✅ <b>어제 완료</b>
 {done_text}
 
-🔍 <b>오늘의 관전 포인트</b>
+⚡ <b>어드바이저 노트</b>
 {claude_comment}"""
     except Exception as e:
         send_error("다니엘프로젝트 브리핑", e)
