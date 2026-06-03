@@ -1,0 +1,31 @@
+name: 주간 패턴 리뷰 (금요일 18:00 KST)
+
+on:
+  schedule:
+    # 매주 금요일 09:00 UTC = 18:00 KST
+    - cron: "0 9 * * 5"
+  workflow_dispatch:
+
+jobs:
+  friday-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 주간 리뷰 실행
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: python friday_review.py
