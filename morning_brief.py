@@ -193,7 +193,7 @@ def get_todoist_completed_yesterday() -> list[str]:
         until = yesterday.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
         resp = requests.get(
-            "https://api.todoist.com/api/v1/tasks/completed/get_all",
+            "https://api.todoist.com/sync/v9/items/completed/get_all",
             headers=headers,
             params={"since": since, "until": until, "limit": 50},
             timeout=10,
