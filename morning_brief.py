@@ -75,8 +75,10 @@ def get_weather() -> str:
 
         icon_map = {"맑음": "☀️", "구름": "⛅", "비": "🌧", "눈": "❄️", "안개": "🌫", "흐림": "☁️"}
         icon = next((v for k, v in icon_map.items() if k in desc), "🌤")
+        # API 응답에 이모지가 포함된 경우 제거
+        desc_clean = re.sub(r'[^\w\s]', '', desc).strip()
 
-        return f"{icon} {escape(desc)} {temp_now}°C  🔻{temp_min} 🔺{temp_max}"
+        return f"{icon} {escape(desc_clean)} {temp_now}°C  🔻{temp_min} 🔺{temp_max}"
     except Exception as e:
         send_error("날씨 조회", e)
         return "🌤 날씨 정보를 가져오지 못했습니다."
