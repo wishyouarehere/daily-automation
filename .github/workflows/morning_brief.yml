@@ -1,8 +1,9 @@
-name: 아침 브리핑 (07:30 KST)
+name: 아침 브리핑 (06:30 KST)
 
 on:
   schedule:
-    - cron: "30 22 * * *"
+    # 매일 21:30 UTC = 06:30 KST (다음날)
+    - cron: "30 21 * * *"
   workflow_dispatch:
 
 jobs:
