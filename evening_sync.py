@@ -21,7 +21,7 @@ TODOIST_TOKEN = os.environ["TODOIST_API_TOKEN"]
 
 # Obsidian vault 내 Daily note 저장 경로
 VAULT_DAILY_DIR = Path(
-    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay/다니엘프로젝트/Daily"
+    "/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay/10-Projects/다니엘프로젝트/Daily"
 )
 
 KST = timezone(timedelta(hours=9))
