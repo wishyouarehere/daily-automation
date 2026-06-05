@@ -52,7 +52,7 @@ def get_completed_tasks(date: datetime) -> list[dict]:
 
         # Sync API로 완료 항목 조회 (REST API v2는 완료 항목 미지원)
         resp = requests.get(
-            "https://api.todoist.com/api/v1/tasks/completed",
+            "https://api.todoist.com/sync/v9/items/completed/get_all",
             headers=headers,
             params={"since": since, "until": until, "limit": 200},
             timeout=15,
