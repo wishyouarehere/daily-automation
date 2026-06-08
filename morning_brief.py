@@ -193,17 +193,17 @@ def get_todoist_completed_yesterday() -> list[str]:
         until = yesterday.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
         resp = requests.get(
-            "https://api.todoist.com/sync/v9/items/completed/get_all",
+            "https://api.todoist.com/api/v1/tasks/completed/by_completion_date",
             headers=headers,
             params={"since": since, "until": until, "limit": 50},
             timeout=10,
         )
-        if not resp.ok:
-            return []
+        resp.raise_for_status()
 
         items = resp.json().get("items", [])
         return [escape(item["content"]) for item in items]
-    except Exception:
+    except Exception as e:
+        send_error("Todoist 어제 완료 항목 조회", e)
         return []
 
 
