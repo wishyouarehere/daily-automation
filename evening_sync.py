@@ -50,15 +50,16 @@ def get_completed_tasks(date: datetime) -> list[dict]:
         since = date.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
         until = date.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Sync API로 완료 항목 조회 (REST API v2는 완료 항목 미지원)
+        # REST API v1 완료 항목 조회 (완료 날짜 기준)
         resp = requests.get(
-            "https://api.todoist.com/sync/v9/items/completed/get_all",
+            "https://api.todoist.com/api/v1/tasks/completed/by_completion_date",
             headers=headers,
-            params={"since": since, "until": until, "limit": 200},
+            params={"since": since, "until": until},
             timeout=15,
         )
         resp.raise_for_status()
-        items = resp.json().get("items", [])
+        data = resp.json()
+        items = data.get("items", [])
 
         # 프로젝트 ID → 이름 매핑
         proj_resp = requests.get("https://api.todoist.com/api/v1/projects", headers=headers, timeout=10)
