@@ -229,10 +229,15 @@ def get_todoist_completed_yesterday() -> list[str]:
         except Exception:
             inbox_ids = set()
 
+        import re
+        def strip_urls(text: str) -> str:
+            return re.sub(r'https?://\S+', '', text).strip()
+
         return [
-            escape(item["content"])
+            escape(strip_urls(item["content"]))
             for item in items
             if str(item.get("project_id", "")) not in inbox_ids
+            and strip_urls(item["content"])  # URL만 있던 항목은 빈 문자열 → 제외
         ]
     except Exception as e:
         send_error("Todoist 어제 완료 항목 조회", e)
