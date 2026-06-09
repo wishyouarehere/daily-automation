@@ -183,6 +183,26 @@ def get_todoist_today() -> str:
         return "  할 일 정보를 가져오지 못했습니다."
 
 
+# ── Todoist 재시도 GET ────────────────────────────────────────────
+def todoist_get(url: str, headers: dict, params: dict = None, retries: int = 3, timeout: int = 15):
+    """5xx 오류 시 최대 3회 재시도 (2초 간격)."""
+    import time
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+            if resp.status_code in (500, 502, 503, 504) and attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            last_exc = e
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+    raise last_exc
+
+
 # ── Todoist 어제 완료 항목 ────────────────────────────────────────
 def get_todoist_completed_yesterday() -> list[str]:
     try:
@@ -192,16 +212,28 @@ def get_todoist_completed_yesterday() -> list[str]:
         since = yesterday.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
         until = yesterday.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
-        resp = requests.get(
+        resp = todoist_get(
             "https://api.todoist.com/api/v1/tasks/completed/by_completion_date",
             headers=headers,
             params={"since": since, "until": until, "limit": 50},
-            timeout=10,
         )
-        resp.raise_for_status()
-
         items = resp.json().get("items", [])
-        return [escape(item["content"]) for item in items]
+
+        # 프로젝트 ID → 이름 매핑 (관리함 제외용)
+        try:
+            proj_resp = todoist_get("https://api.todoist.com/api/v1/projects", headers=headers)
+            proj_data = proj_resp.json()
+            proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
+            # is_inbox_project 플래그가 있는 프로젝트 ID 수집
+            inbox_ids = {str(p["id"]) for p in proj_list if p.get("is_inbox_project")}
+        except Exception:
+            inbox_ids = set()
+
+        return [
+            escape(item["content"])
+            for item in items
+            if str(item.get("project_id", "")) not in inbox_ids
+        ]
     except Exception as e:
         send_error("Todoist 어제 완료 항목 조회", e)
         return []
