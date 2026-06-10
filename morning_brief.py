@@ -231,7 +231,11 @@ def get_todoist_completed_yesterday() -> list[str]:
 
         import re
         def strip_urls(text: str) -> str:
-            return re.sub(r'https?://\S+', '', text).strip()
+            # 마크다운 링크 [제목](url) → 제목만 남기기
+            text = re.sub(r'\[([^\]]+)\]\(https?://[^\)]+\)', r'\1', text)
+            # 남은 단독 URL 제거
+            text = re.sub(r'https?://\S+', '', text)
+            return text.strip()
 
         return [
             escape(strip_urls(item["content"]))
