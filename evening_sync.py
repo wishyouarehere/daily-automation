@@ -63,8 +63,12 @@ def todoist_get(url: str, headers: dict, params: dict = None, retries: int = 3, 
 
 
 # ── Todoist 완료 항목 조회 ────────────────────────────────────────
-def get_completed_tasks(date: datetime) -> list[dict]:
-    """오늘 완료된 Todoist 태스크 목록 반환 (관리함 제외)"""
+def get_completed_tasks(date: datetime) -> list[dict] | None:
+    """오늘 완료된 Todoist 태스크 목록 반환 (관리함 제외).
+
+    조회 실패 시 None 반환 — 빈 리스트(완료 0건)와 구분해야
+    실패한 날 Obsidian에 '(완료된 항목 없음)'이 잘못 기록되는 것을 막는다.
+    """
     try:
         headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
         since = date.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
@@ -98,7 +102,7 @@ def get_completed_tasks(date: datetime) -> list[dict]:
         ]
     except Exception as e:
         send_error("Todoist 완료 항목 조회", e)
-        return []
+        return None
 
 
 # ── Obsidian Daily Note append ────────────────────────────────────
@@ -136,6 +140,17 @@ def append_to_daily_note(tasks: list[dict], date: datetime) -> None:
 def main():
     now = datetime.now(KST)
     tasks = get_completed_tasks(now)
+
+    # 조회 실패 시 기록하지 않고 종료 — 잘못된 '없음' 섹션이 남으면 재실행도 막힌다
+    if tasks is None:
+        date_str = now.strftime("%Y년 %m월 %d일")
+        send_telegram(
+            f"❌ <b>저녁 기록 실패 — {date_str}</b>\n"
+            "Todoist 조회에 실패해 Obsidian에 기록하지 않았습니다.\n"
+            "복구하려면 직접 실행: <code>python evening_sync.py</code>"
+        )
+        sys.exit(1)
+
     append_to_daily_note(tasks, now)
 
     # 텔레그램 완료 알림
