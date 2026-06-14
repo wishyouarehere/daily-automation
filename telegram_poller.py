@@ -49,6 +49,20 @@ def add_task(content: str, project_id: str | None) -> None:
     resp.raise_for_status()
 
 
+def get_active_contents(project_id: str | None) -> set:
+    """해당 프로젝트의 미완료 할일 content 집합 (중복 등록 방지용)."""
+    try:
+        params = {"project_id": project_id} if project_id else {}
+        resp = requests.get("https://api.todoist.com/api/v1/tasks",
+                            headers=TD_HEADERS, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        tasks = data.get("results", data) if isinstance(data, dict) else data
+        return {(t.get("content") or "").strip() for t in tasks}
+    except Exception:
+        return set()
+
+
 # ── 텔레그램 ──────────────────────────────────────────────────────
 def get_updates(offset: int = None) -> list:
     params = {"timeout": 0, "allowed_updates": json.dumps(["callback_query"])}
@@ -84,6 +98,8 @@ def main():
 
     callbacks = [u for u in updates if "callback_query" in u]
     project_id = get_project_id() if callbacks else None
+    existing = get_active_contents(project_id) if callbacks else set()  # Todoist 기존 미완료
+    seen = set()  # 이번 실행 내 중복 방지
 
     processed = 0
     for u in callbacks:
@@ -101,8 +117,14 @@ def main():
             answer_callback(cb_id, "내용 없음")
             continue
 
+        # 중복 방지: 이번 실행에서 이미 처리했거나, Todoist에 같은 미완료 할일이 있으면 스킵
+        if content in seen or content in existing:
+            answer_callback(cb_id, "이미 등록된 할일이에요")
+            continue
+
         try:
             add_task(content, project_id)
+            seen.add(content)
             answer_callback(cb_id, "✅ Todoist에 등록됨")
             send_message(chat_id, f"✅ <b>등록됨</b> — {content}")
             processed += 1
