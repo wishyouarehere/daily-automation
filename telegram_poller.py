@@ -92,6 +92,14 @@ def send_message(chat_id, text: str) -> None:
 # ── 메인 ──────────────────────────────────────────────────────────
 def main():
     updates = get_updates()
+
+    # 진단 로깅: 1클릭이 몇 update로 들어오는지 확인용
+    for u in updates:
+        cq = u.get("callback_query", {})
+        msg = cq.get("message", {})
+        print(f"  [DEBUG update_id={u['update_id']}] cb_id={cq.get('id')} "
+              f"msg_id={msg.get('message_id')} msg_date={msg.get('date')} data={cq.get('data')}")
+
     if not updates:
         print("새 업데이트 없음")
         return
