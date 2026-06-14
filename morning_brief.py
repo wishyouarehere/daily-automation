@@ -377,7 +377,12 @@ def get_todo_candidates(daily_text: str) -> list:
             l = l.strip().lstrip("-·*0123456789. ").strip()
             if l and l != "없음":
                 lines.append(l[:18])  # callback_data 64바이트 안전
-        return lines[:4]
+        # 중복 제거 (같은 할일이 버튼 2개로 뜨는 것 방지)
+        uniq = []
+        for l in lines:
+            if l not in uniq:
+                uniq.append(l)
+        return uniq[:4]
     except Exception as e:
         send_error("할일 후보 추출", e)
         return []
