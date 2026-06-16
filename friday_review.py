@@ -6,6 +6,7 @@
 import os
 import re
 import sys
+import time
 import base64
 import requests
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,18 @@ KST      = timezone(timedelta(hours=9))
 # ── 텔레그램 ──────────────────────────────────────────────────────
 def send_telegram(text: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    last_err = None
+    for attempt in range(3):  # 일시적 네트워크 지연 대비 재시도 (백오프 2s, 4s)
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            resp.raise_for_status()
+            return
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    raise last_err
 
 
 # ── GitHub 파일 읽기 ──────────────────────────────────────────────
