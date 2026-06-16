@@ -87,7 +87,13 @@ def get_completed_tasks(date: datetime) -> list[dict] | None:
             proj_data = proj_resp.json()
             proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
             proj_map = {str(p["id"]): p["name"] for p in proj_list}
-            inbox_ids = {str(p["id"]) for p in proj_list if p.get("is_inbox_project")}
+            # Todoist v1 API는 inbox_project 필드를 사용한다 (구 is_inbox_project 아님).
+            # 안전하게 두 필드 모두 체크해 Inbox(관리함) 항목을 확실히 제외한다.
+            inbox_ids = {
+                str(p["id"])
+                for p in proj_list
+                if p.get("inbox_project") or p.get("is_inbox_project")
+            }
         except Exception:
             proj_map = {}
             inbox_ids = set()
