@@ -1,6 +1,6 @@
 """
-주간 패턴 리뷰 — 매주 금요일 18:00 KST
-이번 주 Daily 파일 5개 + _INDEX.md + 결정-로그 → Claude 분석 → 텔레그램 전송
+하루 마감 리뷰 — 매주 월~금 19:00 KST
+오늘(KST) Daily 파일 1개 + _CONTEXT.md → Claude 분석 → 텔레그램 전송
 """
 
 import os
@@ -60,84 +60,73 @@ def fetch_github_dir(repo: str, path: str) -> list[dict]:
     return [f for f in resp.json() if f.get("type") == "file" and f["name"].endswith(".md")]
 
 
-# ── 이번 주 Daily 파일 수집 ──────────────────────────────────────
-def get_weekly_dailies() -> str:
-    """workflowy-sync 레포의 Daily 폴더에서 이번 주 파일 5개 수집"""
+# ── 오늘 Daily 파일 수집 ─────────────────────────────────────────
+def get_today_daily() -> str:
+    """workflowy-sync 레포의 Daily 폴더에서 오늘(KST) 날짜 파일 하나 수집"""
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     files = fetch_github_dir(WF_REPO, "Daily")
-    if not files:
-        # _DAILY_LATEST.md 하나라도 가져오기
-        return fetch_github_file(WF_REPO, "_DAILY_LATEST.md")
 
-    # 최신순 5개
-    recent = sorted(files, key=lambda f: f["name"], reverse=True)[:5]
-    parts = []
-    for f in recent:
-        content = fetch_github_file(WF_REPO, f["path"])
-        # frontmatter 제거
-        content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL).strip()
-        parts.append(f"### {f['name']}\n{content}")
-    return "\n\n".join(parts)
+    # 오늘 날짜(YYYY-MM-DD)로 시작하는 파일 찾기, 없으면 _DAILY_LATEST.md 폴백
+    today_file = next((f for f in files if f["name"].startswith(today_str)), None)
+    if today_file:
+        content = fetch_github_file(WF_REPO, today_file["path"])
+    else:
+        content = fetch_github_file(WF_REPO, "_DAILY_LATEST.md")
+
+    # frontmatter 제거
+    content = re.sub(r"^---.*?---\n", "", content, flags=re.DOTALL).strip()
+    return content
 
 
-# ── Claude 주간 리뷰 생성 ─────────────────────────────────────────
-def generate_weekly_review(daily_text: str, index_text: str, context_text: str) -> str:
-    now = datetime.now(KST)
-    week_str = f"{now.year}년 {now.month}월 {now.isocalendar()[1]}주차"
+# ── Claude 하루 마감 리뷰 생성 ────────────────────────────────────
+def generate_daily_review(daily_text: str, context_text: str) -> str:
+    prompt = f"""당신은 20년차 CPO 장홍석(Jay)의 하루 마감 파트너입니다.
+오늘 기록(인풋)에서 내일로 가져갈 아웃풋 하나를 뽑아내는 게 목적입니다.
 
-    prompt = f"""당신은 20년차 CPO 장홍석(Jay)의 주간 리뷰 파트너입니다.
-
-아래 기록을 보고 5가지를 각각 1~2문장으로만 짚어주세요.
+아래 오늘 기록을 보고 3가지를 각각 1~2문장으로만 짚어주세요.
 - 마크다운 기호 없이 plain text
 - 각 항목: 이모지 + <b>제목</b> + 개행 + 내용 (짧게, 핵심만)
 - 날카롭게. "~하세요" 금지.
+- 오늘 기록이 빈약하면 억지로 채우지 말고 "오늘은 건질 게 적다"고 솔직히 말할 것.
 
-1. 🔋 <b>에너지 분배</b> — 어디에 가장 많이 썼나. 의도한 것인가. (1문장)
-2. ⚠️ <b>피하고 있는 결정</b> — 계속 미뤄지는 것 하나. 왜인지 한 줄. (2문장 이내)
-3. 💎 <b>이번 주 잘한 것</b> — 구체적으로 하나. (1문장)
-4. 🎯 <b>다음 주 단 하나</b> — 반드시 결정하거나 끝낼 것. (1문장)
-5. 📥 <b>Areas 승격 후보</b> — 이번 주 Daily에서 2번 이상 등장한 주제 하나. 어느 20-Areas 파일로 올릴지. (2문장 이내)
+1. 💡 <b>오늘 건진 것</b> — 오늘 기록에서 남길 인사이트/관찰 하나. 글감 될 만하면 [글감] 표시. (1~2문장)
+2. 🔁 <b>매듭 안 지은 것</b> — 오늘 안 끝냈거나 미룬 것 하나. (1문장)
+3. 🎯 <b>내일 단 하나</b> — 내일 반드시 끝낼 하나. (1문장)
 
 [조직/팀 컨텍스트]
-{context_text[:2000]}
+{context_text[:1500]}
 
-[이번 주 프로젝트 현황]
-{index_text[:800]}
-
-[이번 주 Daily 기록]
+[오늘 기록]
 {daily_text[:3000]}"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=600,
+        max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
     text = message.content[0].text.strip()
     text = re.sub(r"[*_`#]+", "", text).strip()
-    return text, week_str
+    return text
 
 
 # ── 메인 ─────────────────────────────────────────────────────────
 def main():
     now = datetime.now(KST)
-    print(f"주간 리뷰 시작: {now.strftime('%Y-%m-%d %H:%M')}")
+    print(f"하루 마감 리뷰 시작: {now.strftime('%Y-%m-%d %H:%M')}")
 
-    daily_text   = get_weekly_dailies()
-    index_text   = fetch_github_file(WF_REPO, "_INDEX.md")
+    daily_text   = get_today_daily()
     context_text = fetch_github_file(WF_REPO, "_CONTEXT.md")
 
-    review_text, week_str = generate_weekly_review(daily_text, index_text, context_text)
-    week_num = now.isocalendar()[1]
-    date_range_start = now - timedelta(days=now.weekday())
-    date_range_end   = date_range_start + timedelta(days=4)
-    week_label = f"{date_range_start.strftime('%-m/%-d')}~{date_range_end.strftime('%-m/%-d')}"
+    review_text = generate_daily_review(daily_text, context_text)
 
-    message = f"""📊 <b>주간 리뷰 — {now.month}월 {week_label}</b>
+    weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
+    message = f"""🌙 <b>하루 마감 — {now.month}/{now.day} ({weekday_kr})</b>
 
 {review_text}"""
 
     send_telegram(message)
-    print("✅ 주간 리뷰 전송 완료")
+    print("✅ 하루 마감 리뷰 전송 완료")
 
 
 if __name__ == "__main__":
