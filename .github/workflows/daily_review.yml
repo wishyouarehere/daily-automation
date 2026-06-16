@@ -2,8 +2,8 @@ name: 하루 마감 리뷰 (월-금 저녁)
 
 on:
   schedule:
-    # 월~금 12:00 UTC = 19:00 KST
-    - cron: "0 12 * * 1-5"
+    # 월~금 10:00 UTC = 19:00 KST
+    - cron: "0 10 * * 1-5"
   workflow_dispatch:
 
 jobs:
