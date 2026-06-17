@@ -43,11 +43,9 @@ KST = timezone(timedelta(hours=9))
 
 
 # ── 텔레그램 전송 ─────────────────────────────────────────────────
-def send_telegram(text: str, reply_markup: dict = None) -> None:
+def send_telegram(text: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
     resp = requests.post(url, json=payload)
     resp.raise_for_status()
 
@@ -376,7 +374,7 @@ def get_todo_candidates(daily_text: str) -> list:
         for l in text.splitlines():
             l = l.strip().lstrip("-·*0123456789. ").strip()
             if l and l != "없음":
-                lines.append(l[:18])  # callback_data 64바이트 안전
+                lines.append(l[:18])  # 브리핑 표시용으로 짧게 자름
         # 중복 제거 (같은 할일이 버튼 2개로 뜨는 것 방지)
         uniq = []
         for l in lines:
@@ -412,7 +410,7 @@ def get_daniel_section() -> str:
         weekly = get_index_weekly(index_text)
         weekly_text = "\n".join(f"  · {w}" for w in weekly[:3]) if weekly else "  없음"
 
-        # 할일 후보 (어제 기록에서 추출) — 리스트로 받아 버튼에도 사용
+        # 할일 후보 (어제 기록에서 추출) — 정보용 텍스트 목록으로만 표시
         todo_list = get_todo_candidates(daily_text)
         todo_text = "\n".join(f"  · {escape(t)}" for t in todo_list) if todo_list else "  (발견된 할일 없음)"
 
@@ -431,15 +429,15 @@ def get_daniel_section() -> str:
 ✅ <b>어제 완료</b>
 {done_text}
 
-📝 <b>어제 기록에서 발견한 할일 후보</b>  <i>(버튼으로 Todoist 등록)</i>
+📝 <b>어제 기록에서 발견한 할일 후보</b>
 {todo_text}
 
 ⚡ <b>어드바이저 노트</b>
 {claude_comment}"""
-        return section, todo_list
+        return section
     except Exception as e:
         send_error("다니엘프로젝트 브리핑", e)
-        return "━━━━━━━━━━━━━━━\n🏢 다니엘프로젝트 브리핑을 가져오지 못했습니다.", []
+        return "━━━━━━━━━━━━━━━\n🏢 다니엘프로젝트 브리핑을 가져오지 못했습니다."
 
 
 # ── 메인 ──────────────────────────────────────────────────────────
@@ -451,7 +449,7 @@ def main():
     weather = get_weather()
     today_sched, tomorrow_sched = get_schedule_section()
     todos = get_todoist_today()
-    daniel, todo_list = get_daniel_section()
+    daniel = get_daniel_section()
 
     message = f"""📋 <b>아침 브리핑 — {date_str}</b>
 
@@ -469,16 +467,7 @@ def main():
 
 {daniel}"""
 
-    # 할일 후보 → 인라인 버튼 (누르면 telegram_poller가 Todoist에 등록)
-    reply_markup = None
-    if todo_list:
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": f"➕ {t}", "callback_data": f"td|{t}"}] for t in todo_list
-            ]
-        }
-
-    send_telegram(message, reply_markup)
+    send_telegram(message)
     print("✅ 아침 브리핑 전송 완료")
 
 
