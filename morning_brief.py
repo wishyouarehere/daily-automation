@@ -271,6 +271,43 @@ def fetch_github_file(filename: str) -> str:
         return ""
 
 
+# ── 데이터 신선도 (파일이 며칠 묵었나) ───────────────────────────
+def file_age_days(filename: str):
+    """workflowy-sync 레포에서 해당 파일의 마지막 커밋이 며칠 전인지. 실패 시 None."""
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        resp = requests.get(
+            f"https://api.github.com/repos/{INDEX_REPO}/commits",
+            headers=headers, params={"path": filename, "per_page": 1}, timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            return None
+        dt = datetime.fromisoformat(data[0]["commit"]["committer"]["date"].replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - dt).days
+    except Exception:
+        return None
+
+
+def get_freshness_line() -> str:
+    """데이터가 며칠 묵었는지 한 줄. staleness가 조용히 숨지 못하게.
+    임계치: 컨텍스트 14일·INDEX 2일·기록 4일 이상이면 ⚠️."""
+    checks = [("컨텍스트", CONTEXT_FILE, 14), ("INDEX", INDEX_FILE, 2), ("기록", DAILY_FILE, 4)]
+    parts = []
+    for label, fn, threshold in checks:
+        d = file_age_days(fn)
+        if d is None:
+            parts.append(f"{label}?")
+        else:
+            mark = " ⚠️" if d >= threshold else ""
+            parts.append(f"{label} {d}d{mark}")
+    return "🩺 데이터 신선도: " + " · ".join(parts)
+
+
 # ── _INDEX.md 에서 미결 항목 파싱 ────────────────────────────────
 def get_index_pending(text: str) -> list[str]:
     items = re.findall(r"- \[ \] (.+)", text)
@@ -391,6 +428,7 @@ def get_daniel_section() -> str:
     try:
         now = datetime.now(KST)
         d_day = (DANIEL_DEADLINE - now).days
+        freshness = get_freshness_line()
 
         # GitHub에서 컨텍스트 파일들 읽기
         index_text   = fetch_github_file(INDEX_FILE)
@@ -419,6 +457,7 @@ def get_daniel_section() -> str:
 
         section = f"""━━━━━━━━━━━━━━━
 🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
+<i>{freshness}</i>
 
 🔴 <b>오늘 포커스 (미결)</b>
 {pending_text}
