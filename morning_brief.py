@@ -504,18 +504,23 @@ def get_daniel_section() -> str:
 🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
 <i>{freshness}</i>
 
+───────────────
 🔴 <b>오늘 포커스 (미결)</b>
 {pending_text}
 
+───────────────
 📅 <b>이번 주 주요 일정</b>
 {weekly_text}
 
+───────────────
 ✅ <b>어제 완료</b>
 {done_text}
 
+───────────────
 📝 <b>어제 기록에서 발견한 할일 후보</b>
 {todo_text}
 
+───────────────
 ⚡ <b>어드바이저 노트</b>
 {claude_comment}"""
         return section
@@ -543,9 +548,11 @@ def main():
 📅 <b>오늘 일정</b>
 {today_sched}
 
+───────────────
 ✅ <b>오늘 할 일</b>
 {todos}
 
+───────────────
 📌 <b>내일 일정 미리보기</b>
 {tomorrow_sched}
 
