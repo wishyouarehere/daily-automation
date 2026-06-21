@@ -139,6 +139,13 @@ def get_schedule_section() -> tuple[str, str]:
         return "  캘린더 정보를 가져오지 못했습니다.", "  캘린더 정보를 가져오지 못했습니다."
 
 
+# ── URL 제거 (마크다운 링크 → 제목만, 단독 URL 삭제) ──────────────
+def strip_urls(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\(https?://[^\)]+\)", r"\1", text)
+    text = re.sub(r"https?://\S+", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 # ── Todoist 오늘 할 일 ────────────────────────────────────────────
 def get_todoist_today() -> str:
     try:
@@ -176,7 +183,10 @@ def get_todoist_today() -> str:
         for t in today_tasks:
             proj_name = escape(proj_map.get(t.get("project_id"), ""))
             label = f"[{proj_name}] " if proj_name else ""
-            lines.append(f"  · {label}{escape(t['content'])}")
+            content = strip_urls(t['content'])
+            if not content:
+                continue
+            lines.append(f"  · {label}{escape(content)}")
 
         return "\n".join(lines)
     except Exception as e:
@@ -308,22 +318,36 @@ def get_freshness_line() -> str:
     return "🩺 데이터 신선도: " + " · ".join(parts)
 
 
-# ── _INDEX.md 에서 미결 항목 파싱 ────────────────────────────────
-def get_index_pending(text: str) -> list[str]:
-    items = re.findall(r"- \[ \] (.+)", text)
-    return [escape(item.strip()) for item in items]
-
-
-# ── _INDEX.md 에서 이번 주 주요 일정 파싱 ────────────────────────
-def get_index_weekly(text: str) -> list[str]:
-    section = re.search(r"이번 주 포커스\n(.*?)(?=\n#|\n---|\Z)", text, re.DOTALL)
-    if not section:
+# ── _INDEX.md 섹션 불릿 파서 (## 헤딩 기준 — 헤더 주석 '-->' 오탐 방지) ──
+def _section_bullets(text: str, heading_kw: str) -> list[str]:
+    m = re.search(
+        r"^##[^\n]*" + re.escape(heading_kw) + r"[^\n]*\n(.*?)(?=^## |\Z)",
+        text, re.DOTALL | re.MULTILINE,
+    )
+    if not m:
         return []
-    return [
-        escape(l.lstrip("- ·").strip())
-        for l in section.group(1).splitlines()
-        if l.strip().startswith(("-", "·", "*"))
-    ]
+    out = []
+    for line in m.group(1).splitlines():
+        s = line.strip()
+        if not s.startswith(("- ", "· ", "* ")):
+            continue
+        s = re.sub(r"^[-·*]\s*", "", s)        # 불릿 기호 제거
+        s = re.sub(r"^\[[ xX]\]\s*", "", s)     # 체크박스 제거
+        s = re.sub(r"[*_`]+", "", s)             # 마크다운 강조 제거
+        s = s.strip()
+        if s:
+            out.append(escape(s))
+    return out
+
+
+# ── 🔴 오늘 포커스(미결) = _INDEX '열린 막힘 / 결정 대기' 섹션 ──
+def get_index_pending(text: str) -> list[str]:
+    return _section_bullets(text, "열린 막힘")
+
+
+# ── 📅 이번 주 주요 일정 = _INDEX '이번 주 포커스' 섹션 ──
+def get_index_weekly(text: str) -> list[str]:
+    return _section_bullets(text, "이번 주 포커스")
 
 
 # ── Claude 한마디 생성 ────────────────────────────────────────────
