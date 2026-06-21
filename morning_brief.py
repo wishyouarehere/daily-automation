@@ -414,7 +414,7 @@ def get_todo_candidates(daily_text: str) -> list:
 규칙:
 - 명확한 실행 항목만. 단순 관찰·감상·회의 맥락 설명은 제외.
 - 이미 완료된 것으로 보이면 제외.
-- 각 항목은 동사로 끝나는 짧은 한 줄 (18자 이내, 텔레그램 버튼에 들어감).
+- 각 항목은 동사로 끝나는 간결한 한 줄. 단 의미가 잘리지 않게 완결된 표현으로(앞뒤 숫자·단어 보존).
 - 할일이 없으면 "없음"만 출력.
 - 번호·불릿·설명 없이 항목만 줄바꿈으로.
 
@@ -433,9 +433,11 @@ def get_todo_candidates(daily_text: str) -> list:
         text = re.sub(r"[*_`#]+", "", text)
         lines = []
         for l in text.splitlines():
-            l = l.strip().lstrip("-·*0123456789. ").strip()
+            l = l.strip()
+            # 앞의 불릿/리스트번호만 제거 — 내용의 숫자(6/30 등)는 보존
+            l = re.sub(r"^(?:[-·*]\s*)?(?:\d+[.)]\s*)?", "", l).strip()
             if l and l != "없음":
-                lines.append(l[:18])  # 브리핑 표시용으로 짧게 자름
+                lines.append(l)  # 전체 보존(앞뒤 자르지 않음)
         # 중복 제거 (같은 할일이 버튼 2개로 뜨는 것 방지)
         uniq = []
         for l in lines:
