@@ -2,7 +2,7 @@
 주간회고 초안 자동 생성 — 매주 금요일 (회사맥북 cron)
 
 설계(2026-06-22 Jay 합의):
-  - regenerate_index 의 ✅(누적 완료) + 이번 주 Daily + 결정로그 + (있으면) Slack 을 모아
+  - regenerate_index 의 ✅(누적 완료) + 이번 주 Daily + 이번 주 수정된 Docs + 결정로그 + (있으면) Slack 을 모아
     주간회고 '초안'을 만든다. 4섹션 중 ①②④ 는 채우고, ③ 블라인드스팟은 '빈칸'으로 둔다.
   - ③(전략적 사고)는 Jay 가 직접 쓴다. 기계는 ②(이번 주 움직임 원재료)까지만 차린다.
     근거: 결정-로그 2026-06-16 "전략적 사고 자체는 자동화에서 뺀다".
@@ -25,6 +25,7 @@ import glob
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime, timedelta
 
 import requests
@@ -40,10 +41,15 @@ from regenerate_index import (
 load_dotenv(SCRIPT_DIR / ".env")
 
 SETUP_DOC = VAULT_PROJECT / "Docs" / "주간회고-소스채널-설정.md"
+DOCS_DIR = VAULT_PROJECT / "Docs"
+# 상시 레퍼런스 라이브러리 — mtime이 일괄로 갱신돼도 회고에 끌어오지 않는다(이번 주 '움직임'이 아님).
+DOCS_EXCLUDE_DIRS = {"케이스리포트"}
 
 # 입력 길이 상한 (Sonnet 컨텍스트 안전)
 DAILY_CHARS = 2500
 WEEKLY_CHARS = 5000
+DOCS_CHARS = 2500
+DOCS_TOTAL_CHARS = 8000
 SLACK_PER_CH_CHARS = 1800
 SLACK_TOTAL_CHARS = 22000
 
@@ -141,6 +147,38 @@ def read_week_daily(monday) -> str:
         except Exception:
             continue
         chunks.append(f"### Daily: {p.name}\n{txt}")
+    return "\n\n".join(chunks)
+
+
+# ── 이번 주 수정된 Docs (월~오늘, 재귀) ───────────────────────────
+def read_week_docs(monday) -> str:
+    """Docs/ 하위(재귀)에서 이번 주 수정된 .md만. 설정문서·레퍼런스 라이브러리·길이초과는 제외.
+    캡이 걸리면 가장 최근 수정된 문서부터 채운다(이번 주 최신 움직임 우선)."""
+    if not DOCS_DIR.is_dir():
+        return ""
+    cutoff = monday.timestamp()
+    setup_name = unicodedata.normalize("NFC", SETUP_DOC.name)
+    files = []
+    for p in DOCS_DIR.rglob("*.md"):
+        if not p.is_file() or p.stat().st_mtime < cutoff:
+            continue
+        # macOS는 한글 파일명을 NFD로 저장 — 비교 전 NFC 정규화(아니면 제외가 안 먹힘)
+        parts = {unicodedata.normalize("NFC", part) for part in p.parts}
+        if parts & DOCS_EXCLUDE_DIRS or unicodedata.normalize("NFC", p.name) == setup_name:
+            continue
+        files.append(p)
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    chunks, total = [], 0
+    for p in files:
+        try:
+            txt = p.read_text(encoding="utf-8")[:DOCS_CHARS]
+        except Exception:
+            continue
+        block = f"### Docs: {p.relative_to(DOCS_DIR)}\n{txt}"
+        if total + len(block) > DOCS_TOTAL_CHARS:
+            break
+        chunks.append(block)
+        total += len(block)
     return "\n\n".join(chunks)
 
 
@@ -265,7 +303,7 @@ BLINDSPOT_TEMPLATE = (
 )
 
 
-def build_prompt(week_label, completed, week_daily, decisions, latest_weekly, slack) -> str:
+def build_prompt(week_label, completed, week_daily, docs, decisions, latest_weekly, slack) -> str:
     slack_section = slack if slack else "(이번 주 Slack 소스 없음 — 볼트 기록만으로 작성)"
     return f"""당신은 20년차 CPO 장홍석(Jay)의 주간회고 파트너다. 아래 입력으로 \
 다니엘프로젝트 주간회고 '초안'을 만든다. ({week_label})
@@ -286,6 +324,7 @@ def build_prompt(week_label, completed, week_daily, decisions, latest_weekly, sl
   [결정로그]와 대조해 표로. 열: 지난주 계획 | 상태(✅완료/🟡진행/⬜미착수) | 메모. [완료 누적]에 있는 건 ✅.
 - ② 이번주 요약: 실제 일어난 것만. 하위에 '결정' '움직임(제품·데이터 / 경영·자본)' '막힘'으로 묶어 사실 위주.
   Slack 입력이 있으면 거기서 새로 포착된 움직임·신호를 반드시 반영(누가-무엇). 날짜(M/D) 접두.
+  [이번주 Docs]에 이번 주 갱신된 기획·리서치 문서가 있으면 거기서 진행된 작업·결정도 반영.
 - ③ 못 본 블라인드스팟: **절대 내용을 쓰지 마라.** 아래 템플릿을 그대로 출력한다(빈칸 유지):
 {BLINDSPOT_TEMPLATE}
 - ④ 차주 계획 + 액션: [직전 회고 ④] 중 아직 안 끝난 것 + 이번주 새로 생긴 것을 '- [ ]'로.
@@ -301,6 +340,9 @@ def build_prompt(week_label, completed, week_daily, decisions, latest_weekly, sl
 
 ## [이번주 Daily]
 {week_daily or "(없음)"}
+
+## [이번주 Docs (이번 주 수정된 기획·리서치 문서)]
+{docs or "(없음)"}
 
 ## [결정로그 (최신 일부)]
 {decisions}
@@ -331,17 +373,19 @@ def main():
     completed = extract_completed_block(INDEX_FILE.read_text(encoding="utf-8")) \
         if INDEX_FILE.exists() else ""
     week_daily = read_week_daily(monday)
+    week_docs = read_week_docs(monday)
     decisions = read_tail(DECISIONS_FILE, DECISIONS_CHARS)
     latest_weekly = read_latest_weekly_text()
 
     slack_token = os.environ.get("SLACK_USER_TOKEN")
     slack = collect_slack(slack_token, monday) if slack_token else ""
     slack_state = "포함" if slack else ("토큰없음" if not slack_token else "수집0")
+    docs_state = f"{week_docs.count('### Docs:')}건" if week_docs else "없음"
 
-    if not week_daily and not completed and not slack:
+    if not week_daily and not completed and not slack and not week_docs:
         fail("입력 빔", "이번 주 소스를 못 읽음")
 
-    prompt = build_prompt(week_label, completed, week_daily, decisions,
+    prompt = build_prompt(week_label, completed, week_daily, week_docs, decisions,
                           latest_weekly, slack)
 
     try:
@@ -370,7 +414,7 @@ def main():
     final = body + "\n"
 
     if DRY:
-        print(f"\n===== [DRY] 저장 예정: {fname} (Slack: {slack_state}) =====\n")
+        print(f"\n===== [DRY] 저장 예정: {fname} (Slack: {slack_state} · Docs: {docs_state}) =====\n")
         print(final)
         return
 
@@ -386,7 +430,7 @@ def main():
     print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})")
     send_telegram(
         f"📝 <b>주간회고 초안 — {week_label}</b>\n"
-        f"Slack: {slack_state}\n"
+        f"Slack: {slack_state} · Docs: {docs_state}\n"
         f"볼트에 저장됨: <code>{fname}</code>\n\n"
         f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
     )
