@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jay.idea-bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>IDEA_BOT_DIR/idea_bot.py</string>
+    </array>
+
+    <!-- 로그인 시 자동 실행 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 종료 시 자동 재시작 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 환경변수: .env 대신 여기서 직접 주입 (install.sh가 채워줌) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IDEA_BOT_TOKEN</key>
+        <string>REPLACE_BOT_TOKEN</string>
+        <key>IDEA_BOT_CHAT_ID</key>
+        <string>REPLACE_CHAT_ID</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>IDEA_BOT_DIR/logs/idea_bot.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>IDEA_BOT_DIR/logs/idea_bot_error.log</string>
+</dict>
+</plist>

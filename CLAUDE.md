@@ -17,10 +17,10 @@
 
 ### 프로젝트 2: 저녁 Todoist→Obsidian 자동 기록 (`evening_sync.py`)
 
-- **실행 시각**: 매일 22:00 KST (GitHub Actions cron: `0 13 * * *` UTC)
+- **실행 시각**: 매일 22:00 KST — **실제 실행 주체는 회사 맥북 로컬 crontab** (`0 22 * * * /opt/homebrew/bin/python3 ~/Documents/daily-automation/evening_sync.py`). GitHub Actions(`0 13 * * *` UTC)도 등록돼 있으나 vault 미접근(아래 주의)이라 텔레그램/아티팩트용일 뿐.
 - **동작**: Todoist 오늘 완료 항목 → Obsidian Daily Note 하단에 append
 - **저장 경로**: `/Users/dp-tech-jhs/Library/Mobile Documents/iCloud~md~obsidian/Documents/jay/다니엘프로젝트/Daily/{YYYY-MM-DD}.md`
-- **주의**: GitHub Actions는 로컬 Obsidian vault에 접근 불가 → 로컬 맥북에서 실행 권장
+- **주의**: GitHub Actions는 로컬 Obsidian vault에 접근 불가 → **로컬 crontab이 실제 기록 주체**. (2026-06-25 검증: `/tmp/evening_sync.log` 6/24 22:00 실행에서 6/22·23·24 노트 기록 성공)
 
 ---
 
