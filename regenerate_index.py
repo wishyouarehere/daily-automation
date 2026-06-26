@@ -43,7 +43,7 @@ VAULT_PROJECT = Path(
 INDEX_FILE = VAULT_PROJECT / "_INDEX.md"
 BAK_FILE = VAULT_PROJECT / "_INDEX.md.bak"
 DAILY_DIR = VAULT_PROJECT / "Daily"
-DECISIONS_FILE = VAULT_PROJECT / "Decisions" / "결정-로그.md"
+DECISIONS_FILE = VAULT_PROJECT / "결정-로그.md"
 WEEKLY_DIR = VAULT_PROJECT / "Weekly"
 
 # 이 스크립트가 쓰는 유일 파일이 _INDEX.md 인지 보장하기 위한 상수
