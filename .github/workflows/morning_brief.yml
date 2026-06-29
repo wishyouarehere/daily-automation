@@ -1,9 +1,10 @@
 name: 아침 브리핑 (06:30 KST)
 
 on:
-  schedule:
-    # 매일 21:30 UTC = 06:30 KST (다음날)
-    - cron: "30 21 * * *"
+  # 2026-06-30: 정시성·예측가능성 위해 집맥 launchd(com.jay.morning-brief, 06:30)로 이전.
+  # 스케줄 비활성. 클라우드 폴백이 필요하면 아래 schedule 주석 해제(GH_PAT secret으로 GitHub 모드 동작).
+  # schedule:
+  #   - cron: "30 21 * * *"   # 21:30 UTC = 06:30 KST
   workflow_dispatch:
 
 jobs:

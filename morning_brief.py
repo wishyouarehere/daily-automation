@@ -30,7 +30,13 @@ GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 CALENDAR_ID = os.environ["GOOGLE_CALENDAR_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+# 컨텍스트 파일 소스 분기:
+#   - GITHUB_TOKEN 있음(예: GitHub Actions) → workflowy-sync 레포에서 API로 읽기
+#   - 없음(예: 집맥 로컬 cron/launchd) → 로컬 미러 디렉토리(~/wf-sync)에서 직접 읽기
+# 로컬 미러(_INDEX.md·_CONTEXT.md·_DAILY_LATEST.md)는 wf_sync.py가 볼트→복사해 두는 정본이라
+# GitHub 미러와 동일 내용. 이렇게 분기하면 Actions·로컬 양쪽 다 안전하고 토큰 의존이 사라진다.
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+MIRROR_DIR = Path(os.getenv("WF_MIRROR_DIR", str(Path.home() / "wf-sync")))
 
 # workflowy-sync 레포 파일들 (GitHub API)
 INDEX_REPO = "wishyouarehere/workflowy-sync"
@@ -259,8 +265,16 @@ def get_todoist_completed_yesterday() -> list[str]:
         return []
 
 
-# ── GitHub에서 파일 읽기 ─────────────────────────────────────────
+# ── 컨텍스트 파일 읽기 (로컬 미러 우선, 토큰 있으면 GitHub) ────────
 def fetch_github_file(filename: str) -> str:
+    if not GITHUB_TOKEN:
+        # 로컬 모드: ~/wf-sync 미러에서 직접 읽기
+        try:
+            p = MIRROR_DIR / filename
+            return p.read_text(encoding="utf-8") if p.exists() else ""
+        except Exception as e:
+            send_error(f"{filename} 로컬 조회", e)
+            return ""
     try:
         import base64
         headers = {
@@ -283,7 +297,16 @@ def fetch_github_file(filename: str) -> str:
 
 # ── 데이터 신선도 (파일이 며칠 묵었나) ───────────────────────────
 def file_age_days(filename: str):
-    """workflowy-sync 레포에서 해당 파일의 마지막 커밋이 며칠 전인지. 실패 시 None."""
+    """해당 파일이 며칠 묵었는지. 로컬 모드=파일 mtime, GitHub 모드=마지막 커밋 기준. 실패 시 None."""
+    if not GITHUB_TOKEN:
+        try:
+            p = MIRROR_DIR / filename
+            if not p.exists():
+                return None
+            mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            return (datetime.now(timezone.utc) - mtime).days
+        except Exception:
+            return None
     try:
         headers = {
             "Authorization": f"Bearer {GITHUB_TOKEN}",
