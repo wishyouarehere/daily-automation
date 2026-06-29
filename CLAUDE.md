@@ -11,9 +11,12 @@
 
 ### 프로젝트 1: 아침 브리핑 텔레그램 봇 (`morning_brief.py`)
 
-- **실행 시각**: 매일 07:30 KST (GitHub Actions cron: `30 22 * * *` UTC)
-- **전송 내용**: 서울 날씨 / 오늘 구글 캘린더 일정 / Todoist 오늘 할 일 / 내일 일정 미리보기
-- **사용 API**: OpenWeatherMap, Google Calendar API (OAuth2), Todoist REST API, Telegram Bot API
+- **실행 시각·주체**: 매일 06:30 KST. **2026-06-30 집맥 로컬 launchd로 이전**(`com.jay.morning-brief`, 실행 자산은 집맥 `~/daily-automation`). GitHub Actions(`.github/workflows/morning_brief.yml`)는 schedule 비활성·`workflow_dispatch` 폴백만. 이전 사유=정시성·예측가능성.
+  - 🔴 **집맥 경로 주의**: 집맥은 launchd가 `~/Documents`(TCC 보호 폴더)를 못 읽어 repo를 `~/daily-automation`(홈 직하)으로 옮김. **회사맥은 그대로 `~/Documents/daily-automation`**(evening_sync는 cron이라 TCC 영향 없음). 즉 집/회사 경로가 갈림.
+  - **컨텍스트 파일 소스**: `GITHUB_TOKEN` 있으면(Actions) workflowy-sync 레포 API, 없으면(집맥) 로컬 미러 `~/wf-sync/{_INDEX,_CONTEXT,_DAILY_LATEST}.md` 직접 읽기(하이브리드 분기).
+- **전송 내용**: 서울 날씨 / 오늘 구글 캘린더 일정 / Todoist 오늘 할 일 / 내일 일정 미리보기 / 다니엘프로젝트 브리핑
+- **사용 API**: OpenWeatherMap, Google Calendar API (OAuth2), Todoist REST API, Telegram Bot API, Anthropic
+  - 🔴 집맥 `.env`의 `GOOGLE_REFRESH_TOKEN`이 만료(`invalid_grant`)면 캘린더 섹션만 빔 → `python auth_google.py`로 재발급 후 `.env` 갱신.
 
 ### 프로젝트 2: 저녁 Todoist→Obsidian 자동 기록 (`evening_sync.py`)
 
