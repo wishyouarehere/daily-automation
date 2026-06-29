@@ -15,8 +15,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── 환경변수 ──────────────────────────────────────────────────────
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+# 알림은 '운영봇'(ops)으로 — 실패·이상만(성공/완료 알림은 보내지 않음, 노이즈 제거).
+# 토큰: env var 우선(GitHub Actions secret), 없으면 ~/.config/ops-notify.env(로컬 crontab).
+def _ops_creds() -> tuple[str, str]:
+    tok = os.environ.get("OPS_BOT_TOKEN", "").strip()
+    cid = os.environ.get("OPS_CHAT_ID", "").strip()
+    if not tok:
+        f = Path.home() / ".config" / "ops-notify.env"
+        if f.exists():
+            for ln in f.read_text().splitlines():
+                if ln.startswith("OPS_BOT_TOKEN="):
+                    tok = ln.split("=", 1)[1].strip().strip("\"'")
+                elif ln.startswith("OPS_CHAT_ID="):
+                    cid = ln.split("=", 1)[1].strip().strip("\"'")
+    return tok, cid
+
+
+OPS_TOKEN, OPS_CHAT_ID = _ops_creds()
 TODOIST_TOKEN = os.environ["TODOIST_API_TOKEN"]
 
 # Obsidian vault 내 Daily note 저장 경로
@@ -29,8 +44,10 @@ KST = timezone(timedelta(hours=9))
 
 # ── 텔레그램 전송 ─────────────────────────────────────────────────
 def send_telegram(text: str) -> None:
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+    if not OPS_TOKEN or not OPS_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{OPS_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": OPS_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
 
 
 def send_error(context: str, error: Exception) -> None:
@@ -158,12 +175,8 @@ def main():
         sys.exit(1)
 
     append_to_daily_note(tasks, now)
-
-    # 텔레그램 완료 알림
-    date_str = now.strftime("%Y년 %m월 %d일")
-    count = len(tasks)
-    msg = f"📓 <b>저녁 기록 완료 — {date_str}</b>\nTodoist 완료 항목 {count}개를 Obsidian Daily Note에 기록했습니다."
-    send_telegram(msg)
+    # 완료(성공) 알림은 보내지 않는다 — 운영봇 정책상 실패·이상만 통지(노이즈 제거).
+    print(f"✅ 저녁 기록 완료 — Todoist {len(tasks)}개 기록(텔레그램 알림 생략)")
 
 
 if __name__ == "__main__":
