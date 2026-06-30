@@ -150,7 +150,7 @@ def format_events(events: list[dict]) -> list[str]:
             time_str = dt.strftime("%H:%M")
         else:
             time_str = "종일"
-        lines.append(f"  {time_str} {escape(e.get('summary', '(제목 없음)'))}")
+        lines.append(f"  {time_str}  {escape(e.get('summary') or '(제목 없음)')}")
     return lines
 
 
@@ -240,11 +240,11 @@ def get_todoist_today_items() -> list[dict]:
 
 
 def format_todo_top(items: list[dict], n: int = 3) -> str:
-    """블록 ① '꼭' 줄: 상위 n개만 한 줄에 압축."""
+    """블록 ① '꼭 할 일': 상위 n개를 한 줄씩 세로로(여백)."""
     if not items:
-        return "꼭: 오늘 지정된 할 일 없음"
+        return "<b>꼭 할 일</b>\n  오늘 지정된 할 일 없음"
     picks = [it["content"] for it in items[:n]]
-    return "꼭: " + "   ".join(f"▢ {c}" for c in picks)
+    return "<b>꼭 할 일</b>\n" + "\n".join(f"  ▢ {c}" for c in picks)
 
 
 # ── Todoist 재시도 GET ────────────────────────────────────────────
@@ -470,7 +470,8 @@ def _parse_brief_json(text: str) -> dict:
 def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
                     weekly: list[str], daily_text: str, today_cal: str,
                     todo_items: list[dict]) -> tuple[str, list[dict]]:
-    """무게중심 한 줄 + 판단 0~3건을 한 번에 생성. (weight, calls) 반환. calls=[{what, level}]."""
+    """무게중심 한 줄 + 판단 0~3건을 한 번에 생성. (weight, calls) 반환.
+    calls=[{headline, body, level}] — headline은 스캔용 굵은 제목, body는 추천·근거."""
     ctx = pack or context_text
     pending_text = "\n".join(f"- {p}" for p in pending[:8]) or "없음"
     weekly_text = "\n".join(f"- {w}" for w in weekly[:6]) or "없음"
@@ -485,11 +486,12 @@ def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
 {_MODE_INSTRUCTION.get(mode, _MODE_INSTRUCTION['standard'])}
 
 출력은 아래 JSON 객체 하나만. 마크다운·코드펜스·설명 문장 금지:
-{{"weight": "...", "calls": [{{"what": "...", "level": "..."}}]}}
+{{"weight": "...", "calls": [{{"headline": "...", "body": "...", "level": "..."}}]}}
 
 weight: 오늘의 무게중심 한 줄. 오늘 Jay가 머리를 써야 할 단 하나를 결론부터 단정으로 (~60자).
 calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
-  - what: "무엇 — 내 추천(하나로 찍기)". 한두 줄. 놓친 비용·다른 관점이 있으면 한 줄 보태라.
+  - headline: 무엇인지 한 토막(명사구, ~18자). 한눈에 스캔되는 제목. 추천·근거는 넣지 마라.
+  - body: 내 추천(하나로 찍기) + 근거. 1~2문장. 놓친 비용·다른 관점 있으면 한 마디 보태라.
   - level: standard/monday면 반드시 "네 결정"(Jay 단독 운영결정)·"대표로 올릴 것"(경영 위로)·"위임"(팀에 기준만 주고 넘김) 중 하나.
 
 규칙:
@@ -529,13 +531,19 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
         raw = message.content[0].text.strip()
         data = _parse_brief_json(raw)
         # quote=False: 따옴표·아포스트로피를 &#x27;로 바꾸지 않음(텔레그램 가독성). < > & 만 이스케이프.
-        weight = re.sub(r"[*_`#]+", "", str(data.get("weight", ""))).strip()
+        demark = lambda s: re.sub(r"[*_`#]+", "", str(s or "")).strip()
+        weight = demark(data.get("weight"))
         calls = []
         for c in data.get("calls", []) or []:
-            what = re.sub(r"[*_`#]+", "", str(c.get("what", ""))).strip()
-            level = str(c.get("level", "")).strip()
-            if what:
-                calls.append({"what": escape(what, quote=False), "level": escape(level, quote=False)})
+            headline = demark(c.get("headline"))
+            body = demark(c.get("body"))
+            level = demark(c.get("level"))
+            if headline or body:
+                calls.append({
+                    "headline": escape(headline, quote=False),
+                    "body": escape(body, quote=False),
+                    "level": escape(level, quote=False),
+                })
         return (escape(weight, quote=False) if weight else ""), calls[:3]
     except Exception as e:
         send_error("참모 브리핑 생성", e)
@@ -544,33 +552,36 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
 
 # ── 블록 ② 참모 판단 렌더 ─────────────────────────────────────────
 _BLOCK2_HEADER = {"standard": "참모 판단", "monday": "위클리 대비", "friday": "주간 회고"}
+_DIVIDER = "━━━━━━━━━━"
 
 
 def render_block2(mode: str, calls: list[dict]) -> str:
-    head = f"━━━━━━━━━━━━━━━\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b> · {dday_label()}"
+    head = f"{_DIVIDER}\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b>   ·   {dday_label()}"
     if not calls:
-        return head + "\n\n오늘 급한 결정 없음. 오전 집중블록 지키세요."
-    lines = []
+        return head + "\n\n오늘 급한 결정 없음.\n오전 집중블록 지키세요."
+    items = []
     for i, c in enumerate(calls, 1):
-        tag = f"  → {c['level']}" if c["level"] else ""
-        lines.append(f"{i}. {c['what']}{tag}")
-    return head + "\n\n" + "\n".join(lines)
+        tag = f"   → {c['level']}" if c["level"] else ""
+        hl = c.get("headline", "")
+        title = f"<b>{i}. {hl}</b>{tag}" if hl else f"<b>{i}.</b>{tag}"
+        body = c.get("body", "")
+        items.append(f"{title}\n{body}" if body else title)
+    # 항목 사이 빈 줄 → 스캔 가능·시원한 여백
+    return head + "\n\n" + "\n\n".join(items)
 
 
 # ── 블록 ③ 백그라운드 (접이식) ────────────────────────────────────
 def render_block3(done: list[str], weekly: list[str], freshness: str) -> str:
     rows = []
     if done:
-        rows.append(f"어제 완료 {len(done)} — " + " · ".join(done[:6]))
-    else:
-        rows.append("어제 완료 — 기록 없음")
+        rows.append(f"<b>어제 완료 {len(done)}</b>\n" + " · ".join(done[:6]))
     if weekly:
-        rows.append("이번주 포커스 — " + " · ".join(weekly[:4]))
+        rows.append("<b>이번주 포커스</b>\n" + " · ".join(weekly[:4]))
     if freshness:
         rows.append(freshness)
-    body = "\n".join(rows)
-    # 텔레그램 접이식 인용 — 평소엔 접혀 'expand' 한 줄만 보이고 탭하면 펼쳐짐
-    return f"<blockquote expandable><b>▾ 백그라운드</b>\n{body}</blockquote>"
+    body = "\n\n".join(rows) if rows else "특이사항 없음"
+    # 텔레그램 접이식 인용 — 평소엔 접혀 '▾ 백그라운드' 한 줄만 보이고 탭하면 펼쳐짐
+    return f"<blockquote expandable><b>▾ 백그라운드</b>\n\n{body}</blockquote>"
 
 
 # ── 메인 ──────────────────────────────────────────────────────────
@@ -595,23 +606,20 @@ def build_message() -> str:
     weather_tag = get_weather_tag()
     today_sched, tomorrow_oneline, today_cal = get_schedule_section()
     todo_items = get_todoist_today_items()
-    header = f"📋 <b>{date_str}</b>" + (f"  ·  {weather_tag}" if weather_tag else "")
+    header = f"📋 <b>{date_str}</b>" + (f"   ·   {weather_tag}" if weather_tag else "")
+    sched_block = f"<b>오늘</b>\n{today_sched}"
+    tomorrow_block = f"<b>내일</b>\n  {tomorrow_oneline}"
 
     # ── 주말: 경량 (블록 ①만 + ② 1줄, ③ 생략, LLM 호출 안 함) ──
     if mode == "weekend":
         index_text = fetch_github_file(INDEX_FILE)
         pending = get_index_pending(index_text)
         if pending:
-            tail = f"주말 — 급한 건 {len(pending)}개 쌓여 있어요(평일에 처리). 오늘은 일정만."
+            tail = f"주말 — 급한 건 {len(pending)}개 쌓여 있어요.\n평일에 처리하고, 오늘은 일정만."
         else:
             tail = "주말 — 급한 결정 없음. 쉬어요."
-        return f"""{header}
-
-{today_sched}
-{format_todo_top(todo_items)}
-내일: {tomorrow_oneline}
-
-{tail}"""
+        parts = [header, sched_block, format_todo_top(todo_items), tomorrow_block, tail]
+        return "\n\n".join(parts)
 
     # ── 평일/월/금: 3블록 ──
     index_text = fetch_github_file(INDEX_FILE)
@@ -625,13 +633,12 @@ def build_message() -> str:
         mode, pack, context_text, pending, weekly, daily_text, today_cal, todo_items,
     )
 
-    # 블록 ①
-    weight_line = f"\n<b>오늘 무게중심</b> — {weight}\n" if weight else ""
-    block1 = f"""{header}
-{weight_line}
-{today_sched}
-{format_todo_top(todo_items)}
-내일: {tomorrow_oneline}"""
+    # 블록 ① — 라벨 섹션을 빈 줄로 띄워 시원하게
+    parts = [header]
+    if weight:
+        parts.append(f"<b>오늘 무게중심</b>\n{weight}")
+    parts += [sched_block, format_todo_top(todo_items), tomorrow_block]
+    block1 = "\n\n".join(parts)
 
     # 블록 ②
     block2 = render_block2(mode, calls)
@@ -641,7 +648,7 @@ def build_message() -> str:
     freshness = get_freshness_warning()
     block3 = render_block3(done, weekly, freshness)
 
-    return f"{block1}\n\n{block2}\n\n{block3}"
+    return f"{block1}\n\n\n{block2}\n\n\n{block3}"
 
 
 def main():
