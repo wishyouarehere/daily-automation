@@ -471,7 +471,7 @@ def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
                     weekly: list[str], daily_text: str, today_cal: str,
                     todo_items: list[dict]) -> tuple[str, list[dict]]:
     """무게중심 한 줄 + 판단 0~3건을 한 번에 생성. (weight, calls) 반환.
-    calls=[{headline, body, level}] — headline은 스캔용 굵은 제목, body는 추천·근거."""
+    calls=[{headline, points, level}] — headline=스캔용 굵은 제목, points=짧은 불릿 리스트."""
     ctx = pack or context_text
     pending_text = "\n".join(f"- {p}" for p in pending[:8]) or "없음"
     weekly_text = "\n".join(f"- {w}" for w in weekly[:6]) or "없음"
@@ -486,12 +486,12 @@ def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
 {_MODE_INSTRUCTION.get(mode, _MODE_INSTRUCTION['standard'])}
 
 출력은 아래 JSON 객체 하나만. 마크다운·코드펜스·설명 문장 금지:
-{{"weight": "...", "calls": [{{"headline": "...", "body": "...", "level": "..."}}]}}
+{{"weight": "...", "calls": [{{"headline": "...", "points": ["...", "..."], "level": "..."}}]}}
 
 weight: 오늘의 무게중심 한 줄. 오늘 Jay가 머리를 써야 할 단 하나를 결론부터 단정으로 (~60자).
 calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
   - headline: 무엇인지 한 토막(명사구, ~18자). 한눈에 스캔되는 제목. 추천·근거는 넣지 마라.
-  - body: 내 추천(하나로 찍기) + 근거. 1~2문장. 놓친 비용·다른 관점 있으면 한 마디 보태라.
+  - points: 2~3개의 짧은 불릿. 첫 불릿 = 내 추천(하나로 찍기). 다음 = 근거. 있으면 놓친 비용·다른 관점 한 불릿. 각 불릿 한 문장(간결, ~40자).
   - level: standard/monday면 반드시 "네 결정"(Jay 단독 운영결정)·"대표로 올릴 것"(경영 위로)·"위임"(팀에 기준만 주고 넘김) 중 하나.
 
 규칙:
@@ -532,18 +532,20 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
         data = _parse_brief_json(raw)
         # quote=False: 따옴표·아포스트로피를 &#x27;로 바꾸지 않음(텔레그램 가독성). < > & 만 이스케이프.
         demark = lambda s: re.sub(r"[*_`#]+", "", str(s or "")).strip()
+        esc = lambda s: escape(demark(s), quote=False)
         weight = demark(data.get("weight"))
         calls = []
         for c in data.get("calls", []) or []:
-            headline = demark(c.get("headline"))
-            body = demark(c.get("body"))
-            level = demark(c.get("level"))
-            if headline or body:
-                calls.append({
-                    "headline": escape(headline, quote=False),
-                    "body": escape(body, quote=False),
-                    "level": escape(level, quote=False),
-                })
+            headline = esc(c.get("headline"))
+            raw_pts = c.get("points")
+            if isinstance(raw_pts, list):
+                points = [esc(p) for p in raw_pts if demark(p)]
+            else:  # 모델이 body 문자열로 흘리면 단일 불릿으로 폴백
+                b = esc(c.get("body") or raw_pts)
+                points = [b] if b else []
+            level = esc(c.get("level"))
+            if headline or points:
+                calls.append({"headline": headline, "points": points, "level": level})
         return (escape(weight, quote=False) if weight else ""), calls[:3]
     except Exception as e:
         send_error("참모 브리핑 생성", e)
@@ -564,8 +566,12 @@ def render_block2(mode: str, calls: list[dict]) -> str:
         tag = f"   → {c['level']}" if c["level"] else ""
         hl = c.get("headline", "")
         title = f"<b>{i}. {hl}</b>{tag}" if hl else f"<b>{i}.</b>{tag}"
-        body = c.get("body", "")
-        items.append(f"{title}\n{body}" if body else title)
+        pts = c.get("points", [])
+        if pts:
+            bullets = "\n".join(f"  · {p}" for p in pts)
+            items.append(f"{title}\n{bullets}")
+        else:
+            items.append(title)
     # 항목 사이 빈 줄 → 스캔 가능·시원한 여백
     return head + "\n\n" + "\n\n".join(items)
 
@@ -574,9 +580,11 @@ def render_block2(mode: str, calls: list[dict]) -> str:
 def render_block3(done: list[str], weekly: list[str], freshness: str) -> str:
     rows = []
     if done:
-        rows.append(f"<b>어제 완료 {len(done)}</b>\n" + " · ".join(done[:6]))
+        bullets = "\n".join(f"  · {d}" for d in done[:6])
+        rows.append(f"<b>어제 완료 {len(done)}</b>\n{bullets}")
     if weekly:
-        rows.append("<b>이번주 포커스</b>\n" + " · ".join(weekly[:4]))
+        bullets = "\n".join(f"  · {w}" for w in weekly[:4])
+        rows.append(f"<b>이번주 포커스</b>\n{bullets}")
     if freshness:
         rows.append(freshness)
     body = "\n\n".join(rows) if rows else "특이사항 없음"
