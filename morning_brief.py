@@ -1,15 +1,21 @@
 """
-아침 브리핑 텔레그램 봇
-매일 07:30 KST에 날씨 / 오늘 일정 / 할 일 / 내일 일정 / 다니엘프로젝트 브리핑을 전송합니다.
+아침 브리핑 텔레그램 봇 — 참모 브리핑 형식(3블록).
+매일 06:30 KST. ① 오늘 한눈에(무게중심·시간표·꼭할일·내일) ② 참모 판단(결정+레벨) ③ 백그라운드(접이식).
+
+설계 원칙: 데이터 덤프가 아니라 '판단'이 본체. 원천 데이터는 압축하거나 접는다.
+요일 변주: 월=위클리 대비 / 금=주간 회고 / 주말=경량. (골격 고정, 블록 ②만 성격 변형)
 
 직접 실행: python morning_brief.py
+요일 강제 테스트: FORCE_WEEKDAY=0(월)~6(일) python morning_brief.py
+드라이런(전송 안 함, stdout만): DRY_RUN=1 python morning_brief.py
 """
 
 import os
 import re
 import sys
+import json
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from html import escape
 from pathlib import Path
 from dotenv import load_dotenv
@@ -43,9 +49,18 @@ INDEX_REPO = "wishyouarehere/workflowy-sync"
 INDEX_FILE = "_INDEX.md"
 CONTEXT_FILE = "_CONTEXT.md"
 DAILY_FILE = "_DAILY_LATEST.md"
-DANIEL_DEADLINE = datetime(2026, 7, 20, tzinfo=timezone(timedelta(hours=9)))
+
+# 다니엘 마일스톤(권위값 = 볼트 _INDEX/결정-로그). 이미 지난 건 자동 생략.
+#   7/3 = 데이원 광고주 v1 출시 · 8/3 = Day 0 전사 전환(v2 출시)
+MILESTONES = [
+    (date(2026, 7, 3), "7/3 v1"),
+    (date(2026, 8, 3), "8/3 전사전환"),
+]
 
 KST = timezone(timedelta(hours=9))
+
+# 참모 브리핑 본문 생성 모델
+CHIEF_MODEL = "claude-opus-4-8"
 
 
 # ── 텔레그램 전송 ─────────────────────────────────────────────────
@@ -65,29 +80,39 @@ def send_error(context: str, error: Exception) -> None:
     print(f"ERROR [{context}]: {error}", file=sys.stderr)
 
 
-# ── 날씨 ─────────────────────────────────────────────────────────
-def get_weather() -> str:
+# ── 날씨 (조건부 꼬리표 — 행동 바꾸는 날씨만) ──────────────────────
+def get_weather_tag() -> str:
+    """헤더에 붙일 짧은 날씨 꼬리표. 비/눈/소나기/극한기온일 때만 반환, 평범하면 "".
+    25도 맑음을 매일 한 줄 쓰는 noise를 없앤다."""
     try:
         url = "https://api.openweathermap.org/data/2.5/forecast"
         params = {"q": WEATHER_CITY, "appid": OWM_KEY, "units": "metric", "lang": "kr", "cnt": 8}
         data = requests.get(url, params=params, timeout=10).json()
 
-        current = data["list"][0]
-        desc = current["weather"][0]["description"]
-        temp_now = round(current["main"]["temp"])
-
+        desc = data["list"][0]["weather"][0]["description"]
         temps = [item["main"]["temp"] for item in data["list"]]
         temp_max = round(max(temps))
         temp_min = round(min(temps))
 
-        icon_map = {"맑음": "☀️", "구름": "⛅", "비": "🌧", "눈": "❄️", "안개": "🌫", "흐림": "☁️"}
-        matched = next(((k, v) for k, v in icon_map.items() if k in desc), ("맑음", "🌤"))
-        desc_clean, icon = matched
+        wet = next((k for k in ("비", "소나기", "눈") if k in desc), None)
+        hot = temp_max >= 33
+        cold = temp_min <= 0
 
-        return f"{icon} {desc_clean} {temp_now}°C  🔻{temp_min} 🔺{temp_max}"
+        if not (wet or hot or cold):
+            return ""  # 평범한 날 → 표시 안 함
+
+        icon = {"비": "🌧", "소나기": "🌦", "눈": "❄️"}.get(wet, "🌡")
+        bits = []
+        if wet:
+            bits.append(f"{icon} {wet}")
+        if hot:
+            bits.append(f"🔺{temp_max}° 더위")
+        if cold:
+            bits.append(f"🔻{temp_min}° 추위")
+        return " · ".join(bits)
     except Exception as e:
         send_error("날씨 조회", e)
-        return "🌤 날씨 정보를 가져오지 못했습니다."
+        return ""
 
 
 # ── Google Calendar ───────────────────────────────────────────────
@@ -129,7 +154,18 @@ def format_events(events: list[dict]) -> list[str]:
     return lines
 
 
-def get_schedule_section() -> tuple[str, str]:
+def _tomorrow_oneline(events: list[dict]) -> str:
+    """내일 일정을 한 줄로 압축. 아침 머리세팅엔 '내일 빡센가' 정도만 필요."""
+    lines = format_events(events)
+    if not lines:
+        return "한가"
+    heads = [l.strip() for l in lines[:2]]
+    more = f" 외 {len(lines) - 2}건" if len(lines) > 2 else ""
+    return " / ".join(heads) + more
+
+
+def get_schedule_section() -> tuple[str, str, str]:
+    """returns (오늘 시간표 문자열, 내일 한 줄, LLM 교차용 오늘 일정 평문)."""
     try:
         service = get_calendar_service()
         now = datetime.now(KST)
@@ -137,12 +173,11 @@ def get_schedule_section() -> tuple[str, str]:
         tomorrow_events = get_events(service, now + timedelta(days=1))
 
         today_lines = format_events(today_events) or ["  일정 없음"]
-        tomorrow_lines = format_events(tomorrow_events) or ["  일정 없음"]
-
-        return "\n".join(today_lines), "\n".join(tomorrow_lines)
+        today_for_llm = "\n".join(l.strip() for l in today_lines)
+        return "\n".join(today_lines), _tomorrow_oneline(tomorrow_events), today_for_llm
     except Exception as e:
         send_error("캘린더 조회", e)
-        return "  캘린더 정보를 가져오지 못했습니다.", "  캘린더 정보를 가져오지 못했습니다."
+        return "  캘린더 정보를 가져오지 못했습니다.", "확인 필요", ""
 
 
 # ── URL 제거 (마크다운 링크 → 제목만, 단독 URL 삭제) ──────────────
@@ -152,8 +187,10 @@ def strip_urls(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
-# ── Todoist 오늘 할 일 ────────────────────────────────────────────
-def get_todoist_today() -> str:
+# ── Todoist 오늘 할 일 (항목 리스트 — 우선순위 정렬) ──────────────
+def get_todoist_today_items() -> list[dict]:
+    """오늘 due 항목을 우선순위 내림차순으로. 각 {content, project, priority}.
+    Todoist priority: 4=p1(최고)…1=p4. content는 URL 제거·escape 완료."""
     try:
         headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
         today_str = datetime.now(KST).strftime("%Y-%m-%d")
@@ -176,28 +213,38 @@ def get_todoist_today() -> str:
             t for t in all_tasks
             if t.get("due") and t["due"].get("date", "").startswith(today_str)
         ]
-
         if not today_tasks:
-            return "  오늘 할 일 없음"
+            return []
 
         proj_resp = requests.get("https://api.todoist.com/api/v1/projects", headers=headers, timeout=10)
         proj_data = proj_resp.json()
         proj_list = proj_data.get("results", proj_data) if isinstance(proj_data, dict) else proj_data
         proj_map = {p["id"]: p["name"] for p in proj_list} if proj_resp.ok else {}
 
-        lines = []
+        items = []
         for t in today_tasks:
-            proj_name = escape(proj_map.get(t.get("project_id"), ""))
-            label = f"[{proj_name}] " if proj_name else ""
-            content = strip_urls(t['content'])
+            content = strip_urls(t["content"])
             if not content:
                 continue
-            lines.append(f"  · {label}{escape(content)}")
-
-        return "\n".join(lines)
+            items.append({
+                "content": escape(content),
+                "project": escape(proj_map.get(t.get("project_id"), "")),
+                "priority": t.get("priority", 1),
+            })
+        # 우선순위 내림차순(높은 게 위), 동순위는 원래 순서 보존
+        items.sort(key=lambda x: -x["priority"])
+        return items
     except Exception as e:
         send_error("Todoist 조회", e)
-        return "  할 일 정보를 가져오지 못했습니다."
+        return []
+
+
+def format_todo_top(items: list[dict], n: int = 3) -> str:
+    """블록 ① '꼭' 줄: 상위 n개만 한 줄에 압축."""
+    if not items:
+        return "꼭: 오늘 지정된 할 일 없음"
+    picks = [it["content"] for it in items[:n]]
+    return "꼭: " + "   ".join(f"▢ {c}" for c in picks)
 
 
 # ── Todoist 재시도 GET ────────────────────────────────────────────
@@ -326,19 +373,16 @@ def file_age_days(filename: str):
         return None
 
 
-def get_freshness_line() -> str:
-    """데이터가 며칠 묵었는지 한 줄. staleness가 조용히 숨지 못하게.
-    임계치: 컨텍스트 14일·INDEX 2일·기록 4일 이상이면 ⚠️."""
+def get_freshness_warning() -> str:
+    """묵은 데이터가 있을 때만 ⚠️ 한 줄. 다 신선하면 "" (매일 green 표시 안 함).
+    임계치: 컨텍스트 14일·INDEX 2일·기록 4일 이상."""
     checks = [("컨텍스트", CONTEXT_FILE, 14), ("INDEX", INDEX_FILE, 2), ("기록", DAILY_FILE, 4)]
-    parts = []
+    stale = []
     for label, fn, threshold in checks:
         d = file_age_days(fn)
-        if d is None:
-            parts.append(f"{label}?")
-        else:
-            mark = " ⚠️" if d >= threshold else ""
-            parts.append(f"{label} {d}d{mark}")
-    return "🩺 데이터 신선도: " + " · ".join(parts)
+        if d is not None and d >= threshold:
+            stale.append(f"{label} {d}d")
+    return ("⚠️ 신선도 — " + " · ".join(stale)) if stale else ""
 
 
 # ── _INDEX.md 섹션 불릿 파서 (## 헤딩 기준 — 헤더 주석 '-->' 오탐 방지) ──
@@ -359,7 +403,7 @@ def _section_bullets(text: str, heading_kw: str) -> list[str]:
         s = re.sub(r"[*_`]+", "", s)             # 마크다운 강조 제거
         s = s.strip()
         if s:
-            out.append(escape(s))
+            out.append(escape(s, quote=False))   # 아포스트로피 보존(텔레그램)
     return out
 
 
@@ -373,213 +417,242 @@ def get_index_weekly(text: str) -> list[str]:
     return _section_bullets(text, "이번 주 포커스")
 
 
-# ── Claude 한마디 생성 ────────────────────────────────────────────
-def get_claude_comment(index_text: str, context_text: str, daily_text: str, completed: list[str]) -> str:
+# ── D-day (지난 마일스톤 자동 생략) ───────────────────────────────
+def dday_label() -> str:
+    today = datetime.now(KST).date()
+    parts = [f"D-{(d - today).days} ({label})" for d, label in MILESTONES if (d - today).days >= 0]
+    return " · ".join(parts) if parts else "다니엘프로젝트"
+
+
+# ── 참모 팩 로드 (~/wf-sync/cache, chief_pack 모듈 재사용) ─────────
+def load_chief_pack() -> str:
+    """매일 ~05:40 갱신되는 농축 참모 팩(인물·관계·막힘). 없거나 stale이면 "".
+    iCloud 볼트를 직접 읽지 않고 캐시 파일만 본다(launchd TCC 회피)."""
     try:
-        if not index_text and not completed and not daily_text:
-            return "  어제 기록을 찾을 수 없습니다."
+        if str(MIRROR_DIR) not in sys.path:
+            sys.path.insert(0, str(MIRROR_DIR))
+        import chief_pack
+        return chief_pack.load() or ""
+    except Exception:
+        return ""
 
-        completed_text = "\n".join(f"- {c}" for c in completed) if completed else "없음"
 
-        prompt = f"""너는 Jay(장홍석, 다니엘프로젝트 부대표·CPO, 20년차 프로덕트)의 참모다.
-아래 맥락을 근거로, 오늘 아침 Jay가 짚어야 할 '운영 결정/막힘' 1~2개를 뽑고 각각 한 줄 판단을 붙여라.
+# ── 참모 브리핑 본문 (단일 LLM 콜: 무게중심 + 판단 0~3건) ──────────
+_MODE_INSTRUCTION = {
+    "standard": "오늘 Jay가 짚어야 할 '운영 결정/막힘'을 뽑아라. level은 셋 중 하나로 분류한다.",
+    "monday": (
+        "오늘은 월요일 — 플랫폼본부 위클리·리더 위클리가 있다. calls는 '오늘 위클리에서 "
+        "Jay가 채우거나 짚어야 할 것'으로 구성해라(이번 주 포커스·열린 막힘 기준). level은 셋 중 하나."
+    ),
+    "friday": (
+        "오늘은 금요일 — 주간 회고 모드. calls는 회고 항목으로 구성해라: 이번 주 닫은 것 / "
+        "다음 주로 넘어가는 것 / 미뤄진 결정. 이때 level은 '닫음' / '넘김' / '미뤄짐' 중 하나로 써라."
+    ),
+}
+
+
+def _parse_brief_json(text: str) -> dict:
+    """모델 출력에서 JSON 추출(코드펜스·앞뒤 잡설 견고 처리). 실패 시 {}."""
+    t = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    s, e = t.find("{"), t.rfind("}")
+    if s != -1 and e != -1 and e > s:
+        try:
+            return json.loads(t[s:e + 1])
+        except Exception:
+            return {}
+    return {}
+
+
+def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
+                    weekly: list[str], daily_text: str, today_cal: str,
+                    todo_items: list[dict]) -> tuple[str, list[dict]]:
+    """무게중심 한 줄 + 판단 0~3건을 한 번에 생성. (weight, calls) 반환. calls=[{what, level}]."""
+    ctx = pack or context_text
+    pending_text = "\n".join(f"- {p}" for p in pending[:8]) or "없음"
+    weekly_text = "\n".join(f"- {w}" for w in weekly[:6]) or "없음"
+    todo_text = "\n".join(f"- {it['content']}" for it in todo_items[:10]) or "없음"
+
+    if not ctx and not pending and not daily_text and not todo_items:
+        return "", []  # 근거 없음 → 억지 생성 안 함
+
+    prompt = f"""너는 Jay(장홍석, 다니엘프로젝트 부대표·CPO, 20년차 프로덕트)의 참모다.
+아래 맥락으로 오늘 아침 브리핑의 핵심을 만든다. 단순 정보 나열이 아니라 '판단'이 값이다.
+
+{_MODE_INSTRUCTION.get(mode, _MODE_INSTRUCTION['standard'])}
+
+출력은 아래 JSON 객체 하나만. 마크다운·코드펜스·설명 문장 금지:
+{{"weight": "...", "calls": [{{"what": "...", "level": "..."}}]}}
+
+weight: 오늘의 무게중심 한 줄. 오늘 Jay가 머리를 써야 할 단 하나를 결론부터 단정으로 (~60자).
+calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
+  - what: "무엇 — 내 추천(하나로 찍기)". 한두 줄. 놓친 비용·다른 관점이 있으면 한 줄 보태라.
+  - level: standard/monday면 반드시 "네 결정"(Jay 단독 운영결정)·"대표로 올릴 것"(경영 위로)·"위임"(팀에 기준만 주고 넘김) 중 하나.
 
 규칙:
-- 가장 시급·비가역한 것부터. 최대 2개(억지로 채우지 말 것 — 마땅한 게 1개면 1개만, 없으면 "오늘 급한 결정 없음").
-- 각 항목 한 줄: "· [무엇] — 내 판단/다음 한 수". 마크다운 기호 금지. 한 줄 안에서 끊지 말되 길게 늘이지 마라.
-- '지금 결정할 것'에 집중(단순 관찰·감상·진행상황 나열 금지). 어제 기록과 현황을 교차해 진짜 쟁점을 짚어라.
-- 근거 없는 단정·맥락에 없는 항목 생성 절대 금지. 애매하면 만들지 마라.
-- 조언·판단만 한다. 실행하지 않는다. 군더더기·해설·"~하세요" 금지. 단정적 구어.
+- 억지로 채우지 마라. 마땅한 게 1개면 1개, 없으면 calls는 빈 배열 [].
+- 근거 없는 단정·맥락에 없는 항목 생성 절대 금지.
+- 오늘 일정과 교차해라(예: 오늘 그 회의 있으면 "거기서 처리").
+- 전체(weight+calls) 900자 이내. 넘으면 설명을 줄이지 말고 calls 개수를 줄여라.
+- 단정적 구어, 결론 먼저. 군더더기·"~하세요"·마크다운 기호 금지.
 
-[조직/팀 전체 컨텍스트]
-{context_text}
+[참모 팩 / 조직 맥락]
+{ctx[:9000]}
 
-[현재 프로젝트 현황(_INDEX — 열린 막힘·이번 주 포커스)]
-{index_text}
-
-[어제 업무 기록]
-{daily_text}
-
-[Todoist 어제 완료]
-{completed_text}"""
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=400,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        # 짤림 감지
-        if message.stop_reason == "max_tokens":
-            print("WARNING: 어드바이저 노트 max_tokens 도달 — 짤림 발생", file=sys.stderr)
-        # 마크다운 제거 (**, *, __, #, ` 등)
-        text = message.content[0].text.strip()
-        text = re.sub(r"[*_`#]+", "", text).strip()
-        return text
-    except Exception as e:
-        send_error("Claude 한마디 생성", e)
-        return "  (생성 실패)"
-
-
-# ── 할일 후보 추출 (어제 기록에서) ───────────────────────────────
-def get_todo_candidates(daily_text: str) -> list:
-    """어제 WorkFlowy 기록에서 Jay가 직접 해야 할 액션 추출. 원본 텍스트 리스트 반환."""
-    try:
-        if not daily_text or not daily_text.strip():
-            return []
-
-        prompt = f"""다음은 장홍석(Jay)의 어제 WorkFlowy 업무 기록이다.
-이 기록에서 'Jay가 직접 해야 할 액션(할일)'으로 보이는 것만 최대 4개 뽑아라.
-
-규칙:
-- 명확한 실행 항목만. 단순 관찰·감상·회의 맥락 설명은 제외.
-- 이미 완료된 것으로 보이면 제외.
-- 각 항목은 동사로 끝나는 간결한 한 줄. 단 의미가 잘리지 않게 완결된 표현으로(앞뒤 숫자·단어 보존).
-- 할일이 없으면 "없음"만 출력.
-- 번호·불릿·설명 없이 항목만 줄바꿈으로.
-
-기록:
-{daily_text}
-
-할일 후보:"""
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = message.content[0].text.strip()
-        text = re.sub(r"[*_`#]+", "", text)
-        lines = []
-        for l in text.splitlines():
-            l = l.strip()
-            # 앞의 불릿/리스트번호만 제거 — 내용의 숫자(6/30 등)는 보존
-            l = re.sub(r"^(?:[-·*]\s*)?(?:\d+[.)]\s*)?", "", l).strip()
-            if l and l != "없음":
-                lines.append(l)  # 전체 보존(앞뒤 자르지 않음)
-        # 중복 제거 (같은 할일이 버튼 2개로 뜨는 것 방지)
-        uniq = []
-        for l in lines:
-            if l not in uniq:
-                uniq.append(l)
-        return uniq[:4]
-    except Exception as e:
-        send_error("할일 후보 추출", e)
-        return []
-
-
-# ── 가독성 포맷: 긴 항목을 '제목(굵게) → 들여쓴 문장별 하위불릿'으로 ──
-def format_list(items, empty: str = "  없음") -> str:
-    """긴 문장의 의도치 않은 줄바꿈을 막고 눈에 들어오게. 문장은 줄이지 않는다.
-    '제목 — 설명' 구조면 제목을 굵게, 설명은 문장 단위로 들여쓴 하위불릿.
-    짧은 항목(구분자·문장 없음)은 한 줄. 입력은 이미 HTML escape된 문자열."""
-    blocks = []
-    for it in items:
-        it = (it or "").strip()
-        if not it:
-            continue
-        parts = re.split(r"\s+[—–-]\s+", it, maxsplit=1)  # '제목 — 설명'
-        head = parts[0].strip()
-        detail = parts[1].strip() if len(parts) == 2 else ""
-        sents = [s.strip() for s in re.split(r"(?<=\.)\s+", detail) if s.strip()] if detail else []
-        if sents:
-            blocks.append("\n".join([f"🔹 <b>{head}</b>"] + [f"     · {s}" for s in sents]))
-        else:
-            blocks.append(f"🔹 {head}")
-    return "\n\n".join(blocks) if blocks else empty
-
-
-# ── 다니엘프로젝트 브리핑 섹션 ───────────────────────────────────
-def get_daniel_section() -> str:
-    try:
-        now = datetime.now(KST)
-        d_day = (DANIEL_DEADLINE - now).days
-        freshness = get_freshness_line()
-
-        # GitHub에서 컨텍스트 파일들 읽기
-        index_text   = fetch_github_file(INDEX_FILE)
-        context_text = fetch_github_file(CONTEXT_FILE)
-        daily_text   = fetch_github_file(DAILY_FILE)
-
-        # 어제 완료 항목 (Todoist)
-        todoist_done = get_todoist_completed_yesterday()
-        # todoist_done은 이미 escape됨 → 재escape 금지(이중 escape하면 '>'가 '&gt;'로 깨짐)
-        done_text = format_list(todoist_done, empty="  기록 없음")
-
-        # 미결 항목 (_INDEX.md 파싱)
-        pending = get_index_pending(index_text)
-        pending_text = format_list(pending[:4], empty="  없음")
-
-        # 이번 주 주요 일정 (_INDEX.md 파싱)
-        weekly = get_index_weekly(index_text)
-        weekly_text = format_list(weekly[:3], empty="  없음")
-
-        # 할일 후보 (어제 기록에서 추출) — 정보용 텍스트 목록으로만 표시
-        todo_list = get_todo_candidates(daily_text)
-        todo_text = format_list([escape(t) for t in todo_list], empty="  (발견된 할일 없음)")
-
-        # 어드바이저 노트
-        claude_comment = get_claude_comment(index_text, context_text, daily_text, todoist_done)
-
-        section = f"""━━━━━━━━━━━━━━━
-🏢 <b>다니엘프로젝트</b>  ·  D-{d_day} | 7/20 전사 전환
-<i>{freshness}</i>
-
-—————
-🔴 <b>오늘 포커스 (미결)</b>
+[열린 막힘·결정 대기 (_INDEX)]
 {pending_text}
 
-—————
-📅 <b>이번 주 주요 일정</b>
+[이번 주 포커스 (_INDEX)]
 {weekly_text}
 
-—————
-✅ <b>어제 완료</b>
-{done_text}
+[어제 업무 기록]
+{daily_text[:4000]}
 
-—————
-📝 <b>어제 기록에서 발견한 할일 후보</b>
-{todo_text}
+[오늘 일정]
+{today_cal or "없음"}
 
-—————
-🎩 <b>참모 한마디 — 오늘 짚을 것</b>
-{claude_comment}"""
-        return section
+[오늘 Todoist]
+{todo_text}"""
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = client.messages.create(
+            model=CHIEF_MODEL,
+            max_tokens=900,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if message.stop_reason == "max_tokens":
+            print("WARNING: 참모 브리핑 max_tokens 도달 — 짤림 가능", file=sys.stderr)
+        raw = message.content[0].text.strip()
+        data = _parse_brief_json(raw)
+        # quote=False: 따옴표·아포스트로피를 &#x27;로 바꾸지 않음(텔레그램 가독성). < > & 만 이스케이프.
+        weight = re.sub(r"[*_`#]+", "", str(data.get("weight", ""))).strip()
+        calls = []
+        for c in data.get("calls", []) or []:
+            what = re.sub(r"[*_`#]+", "", str(c.get("what", ""))).strip()
+            level = str(c.get("level", "")).strip()
+            if what:
+                calls.append({"what": escape(what, quote=False), "level": escape(level, quote=False)})
+        return (escape(weight, quote=False) if weight else ""), calls[:3]
     except Exception as e:
-        send_error("다니엘프로젝트 브리핑", e)
-        return "━━━━━━━━━━━━━━━\n🏢 다니엘프로젝트 브리핑을 가져오지 못했습니다."
+        send_error("참모 브리핑 생성", e)
+        return "", []
+
+
+# ── 블록 ② 참모 판단 렌더 ─────────────────────────────────────────
+_BLOCK2_HEADER = {"standard": "참모 판단", "monday": "위클리 대비", "friday": "주간 회고"}
+
+
+def render_block2(mode: str, calls: list[dict]) -> str:
+    head = f"━━━━━━━━━━━━━━━\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b> · {dday_label()}"
+    if not calls:
+        return head + "\n\n오늘 급한 결정 없음. 오전 집중블록 지키세요."
+    lines = []
+    for i, c in enumerate(calls, 1):
+        tag = f"  → {c['level']}" if c["level"] else ""
+        lines.append(f"{i}. {c['what']}{tag}")
+    return head + "\n\n" + "\n".join(lines)
+
+
+# ── 블록 ③ 백그라운드 (접이식) ────────────────────────────────────
+def render_block3(done: list[str], weekly: list[str], freshness: str) -> str:
+    rows = []
+    if done:
+        rows.append(f"어제 완료 {len(done)} — " + " · ".join(done[:6]))
+    else:
+        rows.append("어제 완료 — 기록 없음")
+    if weekly:
+        rows.append("이번주 포커스 — " + " · ".join(weekly[:4]))
+    if freshness:
+        rows.append(freshness)
+    body = "\n".join(rows)
+    # 텔레그램 접이식 인용 — 평소엔 접혀 'expand' 한 줄만 보이고 탭하면 펼쳐짐
+    return f"<blockquote expandable><b>▾ 백그라운드</b>\n{body}</blockquote>"
 
 
 # ── 메인 ──────────────────────────────────────────────────────────
-def main():
+def resolve_mode(weekday: int) -> str:
+    if weekday in (5, 6):
+        return "weekend"
+    if weekday == 0:
+        return "monday"
+    if weekday == 4:
+        return "friday"
+    return "standard"
+
+
+def build_message() -> str:
     now = datetime.now(KST)
-    day_kr = "월화수목금토일"[now.weekday()]
-    date_str = now.strftime(f"%y/%m/%d/{day_kr}")
+    forced = os.getenv("FORCE_WEEKDAY")
+    weekday = int(forced) if forced not in (None, "") else now.weekday()
+    day_kr = "월화수목금토일"[weekday]
+    date_str = now.strftime(f"%y/%m/%d") + f" {day_kr}"
+    mode = resolve_mode(weekday)
 
-    weather = get_weather()
-    today_sched, tomorrow_sched = get_schedule_section()
-    todos = get_todoist_today()
-    daniel = get_daniel_section()
+    weather_tag = get_weather_tag()
+    today_sched, tomorrow_oneline, today_cal = get_schedule_section()
+    todo_items = get_todoist_today_items()
+    header = f"📋 <b>{date_str}</b>" + (f"  ·  {weather_tag}" if weather_tag else "")
 
-    message = f"""📋 <b>아침 브리핑 — {date_str}</b>
+    # ── 주말: 경량 (블록 ①만 + ② 1줄, ③ 생략, LLM 호출 안 함) ──
+    if mode == "weekend":
+        index_text = fetch_github_file(INDEX_FILE)
+        pending = get_index_pending(index_text)
+        if pending:
+            tail = f"주말 — 급한 건 {len(pending)}개 쌓여 있어요(평일에 처리). 오늘은 일정만."
+        else:
+            tail = "주말 — 급한 결정 없음. 쉬어요."
+        return f"""{header}
 
-🌤 {weather}
-
-━━━━━━━━━━━━━━━
-📅 <b>오늘 일정</b>
 {today_sched}
+{format_todo_top(todo_items)}
+내일: {tomorrow_oneline}
 
-—————
-✅ <b>오늘 할 일</b>
-{todos}
+{tail}"""
 
-—————
-📌 <b>내일 일정 미리보기</b>
-{tomorrow_sched}
+    # ── 평일/월/금: 3블록 ──
+    index_text = fetch_github_file(INDEX_FILE)
+    context_text = fetch_github_file(CONTEXT_FILE)
+    daily_text = fetch_github_file(DAILY_FILE)
+    pending = get_index_pending(index_text)
+    weekly = get_index_weekly(index_text)
+    pack = load_chief_pack()
 
-{daniel}"""
+    weight, calls = get_chief_brief(
+        mode, pack, context_text, pending, weekly, daily_text, today_cal, todo_items,
+    )
 
+    # 블록 ①
+    weight_line = f"\n<b>오늘 무게중심</b> — {weight}\n" if weight else ""
+    block1 = f"""{header}
+{weight_line}
+{today_sched}
+{format_todo_top(todo_items)}
+내일: {tomorrow_oneline}"""
+
+    # 블록 ②
+    block2 = render_block2(mode, calls)
+
+    # 블록 ③ (접이식)
+    done = get_todoist_completed_yesterday()
+    freshness = get_freshness_warning()
+    block3 = render_block3(done, weekly, freshness)
+
+    return f"{block1}\n\n{block2}\n\n{block3}"
+
+
+def main():
+    try:
+        message = build_message()
+    except Exception as e:
+        send_error("브리핑 조립", e)
+        return
+    if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
+        print(message)
+        return
     send_telegram(message)
     print("✅ 아침 브리핑 전송 완료")
 

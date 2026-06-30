@@ -12,11 +12,18 @@
 ### 프로젝트 1: 아침 브리핑 텔레그램 봇 (`morning_brief.py`)
 
 - **실행 시각·주체**: 매일 06:30 KST. **2026-06-30 집맥 로컬 launchd로 이전**(`com.jay.morning-brief`, 실행 자산은 집맥 `~/daily-automation`). GitHub Actions(`.github/workflows/morning_brief.yml`)는 schedule 비활성·`workflow_dispatch` 폴백만. 이전 사유=정시성·예측가능성.
-  - 🔴 **집맥 경로 주의**: 집맥은 launchd가 `~/Documents`(TCC 보호 폴더)를 못 읽어 repo를 `~/daily-automation`(홈 직하)으로 옮김. **회사맥은 그대로 `~/Documents/daily-automation`**(evening_sync는 cron이라 TCC 영향 없음). 즉 집/회사 경로가 갈림.
+  - 🔴 **집맥 경로 주의**: 집맥은 launchd가 `~/Documents`(TCC 보호 폴더)를 못 읽어 repo를 `~/daily-automation`(홈 직하)으로 옮김. **회사맥은 그대로 `~/Documents/daily-automation`**(개발 클론, evening_sync는 cron이라 TCC 영향 없음). 즉 집/회사 경로가 갈림.
   - **컨텍스트 파일 소스**: `GITHUB_TOKEN` 있으면(Actions) workflowy-sync 레포 API, 없으면(집맥) 로컬 미러 `~/wf-sync/{_INDEX,_CONTEXT,_DAILY_LATEST}.md` 직접 읽기(하이브리드 분기).
-- **전송 내용**: 서울 날씨 / 오늘 구글 캘린더 일정 / Todoist 오늘 할 일 / 내일 일정 미리보기 / 다니엘프로젝트 브리핑
-- **사용 API**: OpenWeatherMap, Google Calendar API (OAuth2), Todoist REST API, Telegram Bot API, Anthropic
-  - 🔴 집맥 `.env`의 `GOOGLE_REFRESH_TOKEN`이 만료(`invalid_grant`)면 캘린더 섹션만 빔 → `python auth_google.py`로 재발급 후 `.env` 갱신.
+- **형식**: 참모 브리핑 3블록 (데이터 덤프 아님 — '판단'이 본체). 2026-06-30 전면 재설계.
+  - **① 오늘 한눈에**: 날짜+날씨 꼬리표(비/눈/극한기온일 때만) · `오늘 무게중심`(LLM 1줄) · 오늘 시간표 · `꼭:` 할일 top 1~3(Todoist 우선순위) · `내일:` 한 줄
+  - **② 참모 판단**: D-day(7/3 v1·8/3 전사전환, 지난 건 자동 생략) + 오늘 짚을 결정 0~3건, 각 `→ 네 결정 / 대표로 올릴 것 / 위임` 레벨 태그. 마땅한 게 없으면 "오늘 급한 결정 없음".
+  - **③ 백그라운드**: 텔레그램 `<blockquote expandable>` 접이식. 어제 완료·이번주 포커스·신선도(⚠️ 임계 초과 시만).
+- **요일 변주**(골격 고정, 블록 ②만): 월=`위클리 대비` / 금=`주간 회고`(level=닫음·넘김·미뤄짐) / 토·일=경량(①+1줄, ③ 생략·LLM 호출 안 함).
+- **LLM**: 단일 콜(`get_chief_brief`)로 무게중심+판단 동시 생성(JSON). 모델 `claude-opus-4-8`. 입력 = `chief_pack`(농축 참모 팩, 집맥 ~/wf-sync/cache, ~05:40 갱신) 우선 → 없으면 `_CONTEXT.md` 폴백 + `_INDEX`(열린 막힘·이번주 포커스) + 어제 기록 + 오늘 캘린더 + 오늘 Todoist.
+- **사용 API**: OpenWeatherMap, Google Calendar API (OAuth2), Todoist REST API, Anthropic API, Telegram Bot API
+  - 🔴 `.env`의 `GOOGLE_REFRESH_TOKEN`이 만료(`invalid_grant`)면 캘린더 섹션만 빔 → `python auth_google.py`로 재발급 후 `.env` 갱신(집·회사 .env 각각).
+- **테스트**: `DRY_RUN=1 FORCE_WEEKDAY=0~6 venv/bin/python morning_brief.py` (전송 안 함, 요일 강제, stdout 출력)
+- **참모 팩 재사용**: `~/wf-sync/chief_pack.py`(distill 캐시)·`chief_qa.py`(레벨 판정 철학)와 동일 자산. 새로 만들지 말 것.
 
 ### 프로젝트 2: 저녁 Todoist→Obsidian 자동 기록 (`evening_sync.py`)
 
