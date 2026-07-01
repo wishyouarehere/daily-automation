@@ -60,7 +60,7 @@ MILESTONES = [
 KST = timezone(timedelta(hours=9))
 
 # 참모 브리핑 본문 생성 모델
-CHIEF_MODEL = "claude-opus-4-8"
+CHIEF_MODEL = "claude-sonnet-4-6"
 
 
 # ── 텔레그램 전송 ─────────────────────────────────────────────────
