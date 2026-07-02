@@ -118,6 +118,8 @@ Jay 본인이 다니엘프로젝트 부대표(20년차 CPO)입니다. Jay를 직
         max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
+    from llm_ledger import log_anthropic
+    log_anthropic("daily_review", message)
     text = message.content[0].text.strip()
     text = re.sub(r"[*_`#]+", "", text).strip()
     return text

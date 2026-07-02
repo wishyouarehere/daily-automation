@@ -528,6 +528,8 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}],
         )
+        from llm_ledger import log_anthropic
+        log_anthropic("morning_brief", message)
         if message.stop_reason == "max_tokens":
             print("WARNING: 참모 브리핑 max_tokens 도달 — 짤림 가능", file=sys.stderr)
         raw = message.content[0].text.strip()

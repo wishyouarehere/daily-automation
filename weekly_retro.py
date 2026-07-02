@@ -396,6 +396,8 @@ def main():
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
         )
+        from llm_ledger import log_anthropic
+        log_anthropic("weekly_retro", msg)
         body = "".join(b.text for b in msg.content
                        if getattr(b, "type", "") == "text").strip()
     except Exception as e:
