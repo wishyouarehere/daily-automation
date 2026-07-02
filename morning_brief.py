@@ -158,7 +158,7 @@ def _tomorrow_oneline(events: list[dict]) -> str:
     """내일 일정을 한 줄로 압축. 아침 머리세팅엔 '내일 빡센가' 정도만 필요."""
     lines = format_events(events)
     if not lines:
-        return "한가"
+        return "일정 없음"
     heads = [l.strip() for l in lines[:2]]
     more = f" 외 {len(lines) - 2}건" if len(lines) > 2 else ""
     return " / ".join(heads) + more
@@ -488,10 +488,10 @@ def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
 출력은 아래 JSON 객체 하나만. 마크다운·코드펜스·설명 문장 금지:
 {{"weight": "...", "calls": [{{"headline": "...", "points": ["...", "..."], "level": "..."}}]}}
 
-weight: 오늘의 무게중심 한 줄. 오늘 Jay가 머리를 써야 할 단 하나를 결론부터 단정으로 (~60자).
+weight: 오늘의 무게중심 한 줄. 오늘 Jay가 머리를 써야 할 단 하나를 명사형으로 압축 (~40자). 배경 설명·수식어 금지. 형식 예: "14시 대표 미팅 — 미뤄진 결정 마감. 비가역 항목은 오늘이 데드라인".
 calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
   - headline: 무엇인지 한 토막(명사구, ~18자). 한눈에 스캔되는 제목. 추천·근거는 넣지 마라.
-  - points: 2~3개의 짧은 불릿. 첫 불릿 = 내 추천(하나로 찍기). 다음 = 근거. 있으면 놓친 비용·다른 관점 한 불릿. 각 불릿 한 문장(간결, ~40자).
+  - points: 2~3개의 짧은 불릿. 첫 불릿 = 내 추천(하나로 찍기). 다음 = 근거. 있으면 놓친 비용·다른 관점 한 불릿. 각 불릿 명사형 종결로 컴팩트하게 (~30자). 예: "8조4항 활용범위 오늘 마감 — 14시 미팅에서" / "1차 코호트에 영구 고정, 비가역".
   - level: standard/monday면 반드시 "네 결정"(Jay 단독 운영결정)·"대표로 올릴 것"(경영 위로)·"위임"(팀에 기준만 주고 넘김) 중 하나.
 
 규칙:
@@ -499,7 +499,8 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
 - 근거 없는 단정·맥락에 없는 항목 생성 절대 금지.
 - 오늘 일정과 교차해라(예: 오늘 그 회의 있으면 "거기서 처리").
 - 전체(weight+calls) 900자 이내. 넘으면 설명을 줄이지 말고 calls 개수를 줄여라.
-- 단정적 구어, 결론 먼저. 군더더기·"~하세요"·마크다운 기호 금지.
+- 결론 먼저, 명사형·체언 종결로 끊는다. 명령형("~해라")·권유("~하세요")·훈계 금지. 군더더기·마크다운 기호 금지.
+- 전체 톤 = 유능한 참모가 상사에게 보고하는 절제된 존중. 뼈대는 명사형 컴팩트를 유지하되, 건방진 단정·지시조는 금지하고 필요한 자리엔 담백한 해요체 한 문장을 허용한다.
 
 [참모 팩 / 조직 맥락]
 {ctx[:9000]}
@@ -560,7 +561,7 @@ _DIVIDER = "━━━━━━━━━━"
 def render_block2(mode: str, calls: list[dict]) -> str:
     head = f"{_DIVIDER}\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b>   ·   {dday_label()}"
     if not calls:
-        return head + "\n\n오늘 급한 결정 없음.\n오전 집중블록 지키세요."
+        return head + "\n\n오늘 급한 결정 없음 — 오전 집중블록 확보."
     items = []
     for i, c in enumerate(calls, 1):
         tag = f"   → {c['level']}" if c["level"] else ""
