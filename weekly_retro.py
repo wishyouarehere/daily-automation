@@ -361,6 +361,12 @@ def sns_weekly_block(monday) -> str:
     try:
         from pathlib import Path as _P
         sys.path.insert(0, str(_P.home() / "sns-tracker"))
+        try:
+            import automation_flags as af
+            if not af.enabled("weekly_sns_block"):   # 웹 ⚙️ 토글
+                return ""
+        except Exception:
+            pass
         import insights as ins
         from datetime import date as _date, timedelta as _td
         week_start = monday.date() if hasattr(monday, "date") else monday
