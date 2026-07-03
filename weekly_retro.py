@@ -352,6 +352,41 @@ def build_prompt(week_label, completed, week_daily, docs, decisions, latest_week
 """
 
 
+# ── SNS 콘텐츠 주간 블록 (2026-07-03, LLM 무호출·데이터만) ─────────
+def sns_weekly_block(monday) -> str:
+    """sns-tracker 데이터로 '⑤ 콘텐츠·SNS 주간' 부록 생성. 실패·킬스위치면 빈 문자열(회고 본문 무영향).
+    끄기: WEEKLY_SNS_BLOCK_KILL=1"""
+    if os.environ.get("WEEKLY_SNS_BLOCK_KILL", "").strip() in ("1", "true", "TRUE"):
+        return ""
+    try:
+        from pathlib import Path as _P
+        sys.path.insert(0, str(_P.home() / "sns-tracker"))
+        import insights as ins
+        from datetime import date as _date, timedelta as _td
+        week_start = monday.date() if hasattr(monday, "date") else monday
+        posts = ins._published_posts()
+        new_posts = [p for p in posts if p["published_date"] >= week_start]
+        views = {}
+        for r in ins._periods((_date.today() - week_start).days + 1):
+            if r["period_start"] >= week_start:
+                views[r["post_id"]] = views.get(r["post_id"], 0) + int(r["view_count"] or 0)
+        top = sorted(views.items(), key=lambda kv: -kv[1])[:3]
+        by_id = {p["id"]: p for p in posts}
+        att = ins.follower_attribution(days=7)
+        growth = " · ".join(f"{t['channel_label']} {t['delta']:+,}"
+                            for t in att["totals"] if t["delta"]) or "변동 없음"
+        lines = ["\n## ⑤ 콘텐츠·SNS 주간 (자동 집계)",
+                 f"- 이번 주 발행 {len(new_posts)}편 · 팔로워 {growth}"]
+        for pid, v in top:
+            p = by_id.get(pid)
+            if p:
+                lines.append(f"- 주간 조회 {v}회 — {p['title'][:40]}")
+        return "\n".join(lines) + "\n"
+    except Exception as e:
+        print(f"WARN: SNS 블록 생략: {type(e).__name__}", file=sys.stderr)
+        return ""
+
+
 # ── 메인 ──────────────────────────────────────────────────────────
 def main():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -413,7 +448,7 @@ def main():
     fname = (f"Week{week_n}-주간회고-{monday.strftime('%m%d')}-"
              f"{now.strftime('%m%d')}-draft.md")
     out_path = WEEKLY_DIR / fname
-    final = body + "\n"
+    final = body + "\n" + sns_weekly_block(monday)
 
     if DRY:
         print(f"\n===== [DRY] 저장 예정: {fname} (Slack: {slack_state} · Docs: {docs_state}) =====\n")
