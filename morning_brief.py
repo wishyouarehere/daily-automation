@@ -563,6 +563,9 @@ _DIVIDER = "━━━━━━━━━━"
 
 def render_block2(mode: str, calls: list[dict]) -> str:
     head = f"{_DIVIDER}\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b>   ·   {dday_label()}"
+    pending = get_pending_decisions_line()
+    if pending:
+        head = head + "\n" + pending
     if not calls:
         return head + "\n\n오늘 급한 결정 없음 — 오전 집중블록 확보."
     items = []
@@ -627,6 +630,31 @@ def get_csc_condition_line():
             note = " — " + d["yellows"][0]
         stale = f" · {int(age_h // 24)}일 전 기준" if age_h > 30 else ""
         return f"{d.get('light', '')} 컨디션 {d['score']}{note}{stale}"
+    except Exception:
+        return None
+
+
+def get_pending_decisions_line():
+    """결정대기열 스냅샷(지표 버스 ~/metrics-exchange) → '대기 중 결정' 한 줄 (W0-3, 2026-07-05).
+    회사맥이 발행한 decisions 스냅샷({"items":[제목들], "count":N})을 읽어 최대 3건 + 외 N건.
+    스냅샷 없음/파손/빈 큐면 None(브리핑은 그대로 감)."""
+    try:
+        p = os.path.expanduser("~/metrics-exchange/snapshots/decisions.json")
+        with open(p) as f:
+            payload = json.load(f)
+        d = payload.get("data") or {}
+        items = [str(t) for t in (d.get("items") or []) if t]
+        count = d.get("count", len(items))
+        if not count:
+            return None
+        shown = items[:3]
+        titles = " · ".join(escape(t) for t in shown)
+        body = f": {titles}" if titles else ""
+        tail = f" 외 {count - len(shown)}건" if count > len(shown) else ""
+        ts = datetime.fromisoformat(payload["ts"])
+        age_h = (datetime.now(ts.tzinfo) - ts).total_seconds() / 3600
+        stale = f" · {int(age_h)}시간 전 기준" if age_h > 24 else ""
+        return f"📋 대기 중 결정 {count}건{body}{tail}{stale}"
     except Exception:
         return None
 
