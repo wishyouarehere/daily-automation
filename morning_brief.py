@@ -607,6 +607,30 @@ def resolve_mode(weekday: int) -> str:
     return "standard"
 
 
+def get_csc_condition_line():
+    """CSC 건강 스냅샷(지표 버스 ~/metrics-exchange) → 컨디션 한 줄 (W2, 2026-07-05).
+    폰 수면 데이터가 07:45에 오므로 06:30 브리핑 시점 값은 전일 아침 기준 — 오래되면 라벨.
+    스냅샷 없음/파손이면 None(브리핑은 그대로 감)."""
+    try:
+        p = os.path.expanduser("~/metrics-exchange/snapshots/health.json")
+        with open(p) as f:
+            payload = json.load(f)
+        ts = datetime.fromisoformat(payload["ts"])
+        age_h = (datetime.now(ts.tzinfo) - ts).total_seconds() / 3600
+        d = payload.get("data") or {}
+        if d.get("score") is None:
+            return None
+        note = ""
+        if d.get("reds"):
+            note = " — " + d["reds"][0]
+        elif d.get("yellows"):
+            note = " — " + d["yellows"][0]
+        stale = f" · {int(age_h // 24)}일 전 기준" if age_h > 30 else ""
+        return f"{d.get('light', '')} 컨디션 {d['score']}{note}{stale}"
+    except Exception:
+        return None
+
+
 def build_message() -> str:
     now = datetime.now(KST)
     forced = os.getenv("FORCE_WEEKDAY")
@@ -630,7 +654,11 @@ def build_message() -> str:
             tail = f"주말 — 급한 건 {len(pending)}개 쌓여 있어요.\n평일에 처리하고, 오늘은 일정만."
         else:
             tail = "주말 — 급한 결정 없음. 쉬어요."
-        parts = [header, sched_block, format_todo_top(todo_items), tomorrow_block, tail]
+        parts = [header]
+        cond = get_csc_condition_line()
+        if cond:
+            parts.append(cond)
+        parts += [sched_block, format_todo_top(todo_items), tomorrow_block, tail]
         return "\n\n".join(parts)
 
     # ── 평일/월/금: 3블록 ──
@@ -647,6 +675,9 @@ def build_message() -> str:
 
     # 블록 ① — 라벨 섹션을 빈 줄로 띄워 시원하게
     parts = [header]
+    cond = get_csc_condition_line()
+    if cond:
+        parts.append(cond)
     if weight:
         parts.append(f"<b>오늘 무게중심</b>\n{weight}")
     parts += [sched_block, format_todo_top(todo_items), tomorrow_block]
