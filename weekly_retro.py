@@ -498,17 +498,36 @@ def main():
         fail("파일 쓰기", f"{type(e).__name__}")
         return
 
+    # 같은 주(월요일 기준)를 가리키는 이전 브릿지 회고 자동 삭제 —
+    # 주중에 수동 생성한 반쪽 회고가 금요일 온전판 옆에 중복으로 남지 않게.
+    # regen 은 mtime 최신만 읽어 무해하지만, 옛 파일 실수 저장 시 mtime 역전 리스크 제거 + 폴더 정리.
+    # 파일명 규칙 'Week{N}-주간회고-{monday%m%d}-...' 이므로 monday 접두가 같으면 동일 주. 방금 쓴 건 제외.
+    superseded = []
+    md_prefix = monday.strftime("%m%d")
+    for p in WEEKLY_DIR.glob(f"Week*-주간회고-{md_prefix}-*.md"):
+        if p.name != out_path.name:
+            try:
+                p.unlink()
+                superseded.append(p.name)
+            except OSError:
+                pass
+
     patch_note = ""
     if patched:
         patch_note = (f"\n⚠️ <b>{'·'.join(patched)} 섹션이 잘려 자동 보정됨</b> — "
                       f"{'④ 차주 계획을 직접 채워주세요.' if '④' in patched else '확인 요망.'}")
 
+    sweep_note = ""
+    if superseded:
+        sweep_note = f"\n🧹 이전 브릿지 회고 {len(superseded)}건 삭제: {', '.join(superseded)}"
+
     print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})"
-          + (f" [보정: {'·'.join(patched)}]" if patched else ""))
+          + (f" [보정: {'·'.join(patched)}]" if patched else "")
+          + (f" [정리: {len(superseded)}]" if superseded else ""))
     send_telegram(
         f"📝 <b>주간회고 초안 — {week_label}</b>\n"
         f"Slack: {slack_state} · Docs: {docs_state}\n"
-        f"볼트에 저장됨: <code>{fname}</code>{patch_note}\n\n"
+        f"볼트에 저장됨: <code>{fname}</code>{patch_note}{sweep_note}\n\n"
         f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
     )
 
