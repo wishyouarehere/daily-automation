@@ -303,6 +303,17 @@ BLINDSPOT_TEMPLATE = (
 )
 
 
+def scrub_slack_ids(text: str) -> str:
+    """본문에 새어든 Slack 채널·유저 ID 출처를 제거한다.
+    '(Slack C0AG06765J9)', '(Slack C0BB22M2954·C0A55QL50GP)' 같은 괄호 출처를 통째로 지우고
+    괄호 없이 'Slack C…'만 남은 경우도 정리. 프롬프트 지시의 안전망(LLM이 실수해도 항상 깨끗)."""
+    # 1) 괄호로 감싼 Slack 출처 통째 제거: (Slack ...) — 공백·중점·쉼표로 이어진 ID 다수 포함
+    text = re.sub(r"\s*[（(]\s*Slack\s+[^()（）]*[）)]", "", text)
+    # 2) 괄호 없이 남은 'Slack C0AB…' 토큰 제거(뒤 문장부호는 보존)
+    text = re.sub(r"\s*Slack\s+[CUD][A-Z0-9]{6,}(?:[·,]\s*[CUD][A-Z0-9]{6,})*", "", text)
+    return text
+
+
 def build_prompt(week_label, completed, week_daily, docs, decisions, latest_weekly, slack) -> str:
     slack_section = slack if slack else "(이번 주 Slack 소스 없음 — 볼트 기록만으로 작성)"
     return f"""당신은 20년차 CPO 장홍석(Jay)의 주간회고 파트너다. 아래 입력으로 \
@@ -330,6 +341,7 @@ def build_prompt(week_label, completed, week_daily, docs, decisions, latest_week
 - ④ 차주 계획 + 액션: [직전 회고 ④] 중 아직 안 끝난 것 + 이번주 새로 생긴 것을 '- [ ]'로.
   타운홀전/경영·자본/채용/제품·데이터/일정 등으로 묶어도 좋다. 끝난 건 넣지 마라.
 - 근거 없는 건 지어내지 말고 생략. 한국어. 군더더기 없이. 인물은 직책 3인칭 말고 실명/역할로.
+- **Slack 채널·유저 ID(C/U/D 로 시작하는 코드, 예: C0AG06765J9)는 출력에 절대 쓰지 마라.** 출처는 사람 이름·날짜로만 표기.
 
 # 입력
 ## [완료 누적 (_INDEX ✅ 이번 주 완료)]
@@ -464,6 +476,8 @@ def main():
             "> ⚠️ 자동 생성이 여기서 잘렸습니다 — Jay가 차주 계획을 직접 채워주세요.\n\n"
             "- [ ] \n")
         patched.append("④")
+
+    body = scrub_slack_ids(body)  # Slack 채널·유저 ID 출처 제거(프롬프트 지시의 안전망)
 
     fname = (f"Week{week_n}-주간회고-{monday.strftime('%m%d')}-"
              f"{now.strftime('%m%d')}-draft.md")
