@@ -434,7 +434,7 @@ def main():
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,  # 4000이면 ①② 길게 쓰다 ③④가 잘려 검증 실패 → 회고 조용히 누락(2주 밀린 원인)
             messages=[{"role": "user", "content": prompt}],
         )
         from llm_ledger import log_anthropic
@@ -445,11 +445,25 @@ def main():
         fail("LLM 호출", f"{type(e).__name__}")
         return
 
-    # 제목 띄어쓰기 변동을 허용하기 위해 번호 마커로만 검증
-    required = ["## ①", "## ②", "## ③", "## ④"]
-    missing = [m for m in required if m not in body]
-    if missing or len(body) < 300:
-        fail("출력 검증 실패", f"누락/짧음: {missing} len={len(body)}")
+    # 검증 — 제목 띄어쓰기 변동 허용, 번호 마커로만.
+    # ①② 는 회고의 실체(하드): 빠지면 진짜 실패로 중단.
+    # ③④ 는 자동 보정(소프트): 잘려서 빠져도 죽지 않고 최소 형태로 붙여 저장한다.
+    #   ③ 은 원래 빈 템플릿이라 손실 없음. ④ 는 폴백 헤더+안내로 채우되 텔레그램에 경고.
+    #   → 회고가 조용히 누락돼 _INDEX 포커스/완료가 몇 주씩 고착되는 사고 방지.
+    hard_missing = [m for m in ["## ①", "## ②"] if m not in body]
+    if hard_missing or len(body) < 300:
+        fail("출력 검증 실패", f"핵심 누락/짧음: {hard_missing} len={len(body)}")
+
+    patched = []
+    if "## ③" not in body:
+        body = body.rstrip() + "\n\n" + BLINDSPOT_TEMPLATE
+        patched.append("③")
+    if "## ④" not in body:
+        body = body.rstrip() + (
+            "\n\n## ④ 차주 계획 + 액션\n\n"
+            "> ⚠️ 자동 생성이 여기서 잘렸습니다 — Jay가 차주 계획을 직접 채워주세요.\n\n"
+            "- [ ] \n")
+        patched.append("④")
 
     fname = (f"Week{week_n}-주간회고-{monday.strftime('%m%d')}-"
              f"{now.strftime('%m%d')}-draft.md")
@@ -470,11 +484,17 @@ def main():
         fail("파일 쓰기", f"{type(e).__name__}")
         return
 
-    print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})")
+    patch_note = ""
+    if patched:
+        patch_note = (f"\n⚠️ <b>{'·'.join(patched)} 섹션이 잘려 자동 보정됨</b> — "
+                      f"{'④ 차주 계획을 직접 채워주세요.' if '④' in patched else '확인 요망.'}")
+
+    print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})"
+          + (f" [보정: {'·'.join(patched)}]" if patched else ""))
     send_telegram(
         f"📝 <b>주간회고 초안 — {week_label}</b>\n"
         f"Slack: {slack_state} · Docs: {docs_state}\n"
-        f"볼트에 저장됨: <code>{fname}</code>\n\n"
+        f"볼트에 저장됨: <code>{fname}</code>{patch_note}\n\n"
         f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
     )
 
