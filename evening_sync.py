@@ -60,22 +60,22 @@ def send_error(context: str, error: Exception) -> None:
 
 
 # ── Todoist 재시도 GET ────────────────────────────────────────────
-def todoist_get(url: str, headers: dict, params: dict = None, retries: int = 3, timeout: int = 15):
-    """5xx 오류 시 최대 3회 재시도 (2초 간격)."""
+def todoist_get(url: str, headers: dict, params: dict = None, retries: int = 5, timeout: int = 15):
+    """5xx 오류 시 최대 5회 재시도 (지수 백오프: 2,4,8,16초)."""
     import time
     last_exc = None
     for attempt in range(retries):
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
             if resp.status_code in (500, 502, 503, 504) and attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
+                time.sleep(2 ** (attempt + 1))
                 continue
             resp.raise_for_status()
             return resp
         except Exception as e:
             last_exc = e
             if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
+                time.sleep(2 ** (attempt + 1))
     raise last_exc
 
 
