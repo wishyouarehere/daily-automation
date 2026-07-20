@@ -26,7 +26,7 @@ import os
 import re
 import sys
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -108,15 +108,28 @@ def acquire_week_lock(now) -> bool:
     return True
 
 
-# ── 주차 번호 (기존 Weekly 파일에서 +1) ───────────────────────────
-def next_week_number() -> int:
-    nums = []
+# ── 주차 번호 기준 상수 ─────────────────────────────────────────────
+# 파일명 최대+1 방식은 중간 주 건너뜀·수동 리네임에 취약해 날짜 기준으로 교체 (2026-07-20)
+WEEK_BASELINE_MONDAY = date(2026, 6, 8)  # Week11 시작 월요일
+WEEK_BASELINE_NUM = 11
+
+
+# ── 주차 번호 (날짜 기준) ─────────────────────────────────────────────
+def next_week_number(monday: date) -> int:
+    """해당 주의 월요일(monday)로부터 절대 주차 번호를 계산한다.
+    공식: N = WEEK_BASELINE_NUM + (monday - WEEK_BASELINE_MONDAY).days // 7
+    검증: 0622→13, 0706→15, 0713→16.
+    계산된 N에 해당하는 파일이 이미 다른 날짜로 존재하면 경고 로그만 남기고 계산값을 신뢰.
+    """
+    delta = (monday - WEEK_BASELINE_MONDAY).days
+    n = WEEK_BASELINE_NUM + delta // 7
+    # 충돌 감지: 같은 번호지만 날짜가 다른 파일이 있으면 경고
     if WEEKLY_DIR.is_dir():
-        for p in WEEKLY_DIR.glob("Week*주간회고*.md"):
-            m = re.match(r"Week(\d+)", p.name)
-            if m:
-                nums.append(int(m.group(1)))
-    return (max(nums) + 1) if nums else 1
+        monday_str = monday.strftime("%m%d")
+        for p in WEEKLY_DIR.glob(f"Week{n}-주간회고*.md"):
+            if monday_str not in p.name:
+                print(f"[weekly_retro] WARNING: Week{n} 파일이 이미 다른 날짜로 존재 ({p.name}) — 계산값 Week{n} 신뢰", file=sys.stderr)
+    return n
 
 
 def read_latest_weekly_text() -> str:
@@ -419,7 +432,7 @@ def main():
 
     monday = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)
-    week_n = next_week_number()
+    week_n = next_week_number(monday.date())
     week_label = (f"Week {week_n} ({monday.strftime('%Y-%m-%d')} ~ "
                   f"{now.strftime('%Y-%m-%d')})")
 
