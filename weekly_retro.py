@@ -537,12 +537,31 @@ def main():
     print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})"
           + (f" [보정: {'·'.join(patched)}]" if patched else "")
           + (f" [정리: {len(superseded)}]" if superseded else ""))
-    send_telegram(
-        f"📝 <b>주간회고 초안 — {week_label}</b>\n"
-        f"Slack: {slack_state} · Docs: {docs_state}\n"
-        f"볼트에 저장됨: <code>{fname}</code>{patch_note}{sweep_note}\n\n"
-        f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
-    )
+    from exec_events import exec_gate_suppresses
+    _emitted = False
+    try:
+        from exec_emitter import emit_event
+        _emitted = emit_event(
+            source="weekly_retro",
+            domain="ops",
+            event_type="daily_automation.weekly_retro.draft_saved",
+            title="주간 회고 초안 저장",
+            decision_level="L1",
+            metadata={
+                "week_n": week_n,
+                "slack_included": bool(slack),
+                "patched_sections": ",".join(patched) if patched else "",
+            },
+        )
+    except Exception:
+        _emitted = False
+    if not exec_gate_suppresses(_emitted):
+        send_telegram(
+            f"📝 <b>주간회고 초안 — {week_label}</b>\n"
+            f"Slack: {slack_state} · Docs: {docs_state}\n"
+            f"볼트에 저장됨: <code>{fname}</code>{patch_note}{sweep_note}\n\n"
+            f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
+        )
 
 
 if __name__ == "__main__":

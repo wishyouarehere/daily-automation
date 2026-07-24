@@ -382,6 +382,18 @@ def main():
         f"{diff}\n\n"
         f"<i>아침에 _INDEX 열어 확인 / 롤백: _INDEX.md.bak</i>"
     )
+    try:
+        from exec_emitter import emit_event
+        emit_event(
+            source="regenerate_index",
+            domain="ops",
+            event_type="daily_automation.index_regen.complete",
+            title="_INDEX 재생성 완료",
+            decision_level="L0",
+            metadata={"chars": len(final)},
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

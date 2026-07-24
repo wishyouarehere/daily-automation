@@ -687,7 +687,7 @@ def build_message() -> str:
         if cond:
             parts.append(cond)
         parts += [sched_block, format_todo_top(todo_items), tomorrow_block, tail]
-        return "\n\n".join(parts)
+        return "\n\n".join(parts), {"mode": "weekend", "decision_count": 0}
 
     # ── 평일/월/금: 3블록 ──
     index_text = fetch_github_file(INDEX_FILE)
@@ -719,19 +719,43 @@ def build_message() -> str:
     freshness = get_freshness_warning()
     block3 = render_block3(done, weekly, freshness)
 
-    return f"{block1}\n\n\n{block2}\n\n\n{block3}"
+    return f"{block1}\n\n\n{block2}\n\n\n{block3}", {"mode": mode, "decision_count": len(calls)}
 
 
 def main():
     try:
-        message = build_message()
+        message, _meta = build_message()
     except Exception as e:
         send_error("브리핑 조립", e)
         return
     if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
         print(message)
         return
-    send_telegram(message)
+    from exec_events import exec_gate_suppresses
+    _emitted = False
+    try:
+        from exec_emitter import emit_event
+        _emitted = emit_event(
+            source="morning_brief",
+            domain="ops",
+            event_type="daily_automation.morning_brief.sent",
+            title="아침 브리핑 전송",
+            decision_level="L1",
+            metadata={"mode": _meta.get("mode"), "decision_count": _meta.get("decision_count", 0)},
+        )
+        if _meta.get("decision_count", 0) > 0:
+            emit_event(
+                source="morning_brief",
+                domain="org",
+                event_type="daily_automation.decision.pending",
+                title="결정 사안 대기",
+                decision_level="L2",
+                metadata={"count": _meta["decision_count"]},
+            )
+    except Exception:
+        _emitted = False
+    if not exec_gate_suppresses(_emitted):
+        send_telegram(message)
     print("✅ 아침 브리핑 전송 완료")
 
 

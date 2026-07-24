@@ -167,16 +167,44 @@ def main():
     # 조회 실패 시 기록하지 않고 종료 — 잘못된 '없음' 섹션이 남으면 재실행도 막힌다
     if tasks is None:
         date_str = now.strftime("%Y년 %m월 %d일")
-        send_telegram(
-            f"❌ <b>저녁 기록 실패 — {date_str}</b>\n"
-            "Todoist 조회에 실패해 Obsidian에 기록하지 않았습니다.\n"
-            "복구하려면 직접 실행: <code>python evening_sync.py</code>"
-        )
+        from exec_events import exec_gate_suppresses
+        _emitted = False
+        try:
+            from exec_emitter import emit_event
+            _emitted = emit_event(
+                source="evening_sync",
+                domain="ops",
+                event_type="daily_automation.evening_sync.error",
+                title="저녁 동기화 오류",
+                severity="warning",
+                decision_level="L1",
+                metadata={"error_type": "todoist_fetch_failed"},
+            )
+        except Exception:
+            _emitted = False
+        if not exec_gate_suppresses(_emitted):
+            send_telegram(
+                f"❌ <b>저녁 기록 실패 — {date_str}</b>\n"
+                "Todoist 조회에 실패해 Obsidian에 기록하지 않았습니다.\n"
+                "복구하려면 직접 실행: <code>python evening_sync.py</code>"
+            )
         sys.exit(1)
 
     append_to_daily_note(tasks, now)
     # 완료(성공) 알림은 보내지 않는다 — 운영봇 정책상 실패·이상만 통지(노이즈 제거).
     print(f"✅ 저녁 기록 완료 — Todoist {len(tasks)}개 기록(텔레그램 알림 생략)")
+    try:
+        from exec_emitter import emit_event
+        emit_event(
+            source="evening_sync",
+            domain="ops",
+            event_type="daily_automation.evening_sync.done",
+            title="저녁 동기화 완료",
+            decision_level="L0",
+            metadata={"task_count": len(tasks)},
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

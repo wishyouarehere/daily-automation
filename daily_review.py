@@ -140,7 +140,22 @@ def main():
 
 {review_text}"""
 
-    send_telegram(message)
+    from exec_events import exec_gate_suppresses
+    _emitted = False
+    try:
+        from exec_emitter import emit_event
+        _emitted = emit_event(
+            source="daily_review",
+            domain="ops",
+            event_type="daily_automation.daily_review.sent",
+            title="일일 리뷰 전송",
+            decision_level="L1",
+            metadata={"weekday": weekday_kr},
+        )
+    except Exception:
+        _emitted = False
+    if not exec_gate_suppresses(_emitted):
+        send_telegram(message)
     print("✅ 하루 마감 리뷰 전송 완료")
 
 
