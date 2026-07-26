@@ -382,6 +382,12 @@ def main():
         f"{diff}\n\n"
         f"<i>아침에 _INDEX 열어 확인 / 롤백: _INDEX.md.bak</i>"
     )
+    try:
+        from exec_events import ExecEvent, INDEX_REGEN_COMPLETE, L0
+        from exec_emitter import emit
+        emit(ExecEvent(INDEX_REGEN_COMPLETE, L0, payload={"chars": len(final)}))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

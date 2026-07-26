@@ -687,7 +687,7 @@ def build_message() -> str:
         if cond:
             parts.append(cond)
         parts += [sched_block, format_todo_top(todo_items), tomorrow_block, tail]
-        return "\n\n".join(parts)
+        return "\n\n".join(parts), {"mode": "weekend", "decision_count": 0}
 
     # ── 평일/월/금: 3블록 ──
     index_text = fetch_github_file(INDEX_FILE)
@@ -719,12 +719,12 @@ def build_message() -> str:
     freshness = get_freshness_warning()
     block3 = render_block3(done, weekly, freshness)
 
-    return f"{block1}\n\n\n{block2}\n\n\n{block3}"
+    return f"{block1}\n\n\n{block2}\n\n\n{block3}", {"mode": mode, "decision_count": len(calls)}
 
 
 def main():
     try:
-        message = build_message()
+        message, _meta = build_message()
     except Exception as e:
         send_error("브리핑 조립", e)
         return
@@ -733,6 +733,14 @@ def main():
         return
     send_telegram(message)
     print("✅ 아침 브리핑 전송 완료")
+    try:
+        from exec_events import ExecEvent, BRIEF_SENT, DECISION_PENDING, L1, L2
+        from exec_emitter import emit
+        emit(ExecEvent(BRIEF_SENT, L1, payload=_meta))
+        if _meta.get("decision_count", 0) > 0:
+            emit(ExecEvent(DECISION_PENDING, L2, payload={"count": _meta["decision_count"]}))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

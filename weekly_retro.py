@@ -543,6 +543,16 @@ def main():
         f"볼트에 저장됨: <code>{fname}</code>{patch_note}{sweep_note}\n\n"
         f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
     )
+    try:
+        from exec_events import ExecEvent, WEEKLY_RETRO_SAVED, L1
+        from exec_emitter import emit
+        emit(ExecEvent(WEEKLY_RETRO_SAVED, L1, payload={
+            "week_n": week_n,
+            "slack_included": bool(slack),
+            "patched_sections": patched,
+        }))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

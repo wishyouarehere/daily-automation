@@ -142,6 +142,12 @@ def main():
 
     send_telegram(message)
     print("✅ 하루 마감 리뷰 전송 완료")
+    try:
+        from exec_events import ExecEvent, DAILY_REVIEW_SENT, L1
+        from exec_emitter import emit
+        emit(ExecEvent(DAILY_REVIEW_SENT, L1, payload={"weekday": weekday_kr}))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

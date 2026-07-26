@@ -172,11 +172,23 @@ def main():
             "Todoist 조회에 실패해 Obsidian에 기록하지 않았습니다.\n"
             "복구하려면 직접 실행: <code>python evening_sync.py</code>"
         )
+        try:
+            from exec_events import ExecEvent, EVENING_SYNC_ERROR, L1
+            from exec_emitter import emit
+            emit(ExecEvent(EVENING_SYNC_ERROR, L1, payload={"error_type": "todoist_fetch_failed"}))
+        except Exception:
+            pass
         sys.exit(1)
 
     append_to_daily_note(tasks, now)
     # 완료(성공) 알림은 보내지 않는다 — 운영봇 정책상 실패·이상만 통지(노이즈 제거).
     print(f"✅ 저녁 기록 완료 — Todoist {len(tasks)}개 기록(텔레그램 알림 생략)")
+    try:
+        from exec_events import ExecEvent, EVENING_SYNC_DONE, L0
+        from exec_emitter import emit
+        emit(ExecEvent(EVENING_SYNC_DONE, L0, payload={"task_count": len(tasks)}))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
