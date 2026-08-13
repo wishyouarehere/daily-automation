@@ -13,6 +13,7 @@
 import os
 import re
 import sys
+import time
 import json
 import requests
 from datetime import datetime, date, timedelta, timezone
@@ -426,13 +427,30 @@ def dday_label() -> str:
 
 # ── 참모 팩 로드 (~/wf-sync/cache, chief_pack 모듈 재사용) ─────────
 def load_chief_pack() -> str:
-    """매일 ~05:40 갱신되는 농축 참모 팩(인물·관계·막힘). 없거나 stale이면 "".
-    iCloud 볼트를 직접 읽지 않고 캐시 파일만 본다(launchd TCC 회피)."""
+    """매일 ~05:40 갱신되는 농축 참모 팩(인물·관계·막힘).
+
+    iCloud 볼트를 직접 읽지 않고 캐시 파일만 본다(launchd TCC 회피).
+    🔴 신선한 팩이 없다고 ""를 주면 아침 브리핑이 조직 맥락 없이 나간다(2026-08-13·14 실제 발생:
+    구독 -p 실패로 팩 갱신이 이틀 연속 스킵). 그래서 stale이면 오래된 팩이라도 '며칠 전 것'을
+    명시해 쓴다 — 맥락 없는 브리핑보다 낫고, Jay도 갱신이 멈춘 걸 본문에서 바로 안다.
+    """
     try:
         if str(MIRROR_DIR) not in sys.path:
             sys.path.insert(0, str(MIRROR_DIR))
         import chief_pack
-        return chief_pack.load() or ""
+        fresh = chief_pack.load()
+        if fresh:
+            return fresh
+        stale = chief_pack.load(max_age_h=24 * 7)     # 최대 7일 지난 팩까지 허용
+        if not stale:
+            return ""
+        try:
+            age_h = (time.time() - chief_pack.PACK.stat().st_mtime) / 3600
+            age = f"{age_h/24:.1f}일" if age_h >= 24 else f"{age_h:.0f}시간"
+        except Exception:
+            age = "오래된"
+        return (f"[주의: 참모 팩 갱신 실패 — {age} 전 스냅샷이다. 최근 회의·결정이 빠졌을 수 있으니 "
+                f"단정하지 말고, 브리핑 어딘가에 '참모 팩 {age} 전 것' 한 줄을 남겨라]\n" + stale)
     except Exception:
         return ""
 
