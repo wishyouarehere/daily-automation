@@ -25,6 +25,7 @@ import glob
 import os
 import re
 import sys
+import exec_events  # 🔴 톱레벨 고정: 이후 sys.path.insert(0, 다른 repo)가 같은 이름의 외부 사본을 가리지 못하게 먼저 sys.modules에 올려둔다
 import unicodedata
 from datetime import date, datetime, timedelta
 

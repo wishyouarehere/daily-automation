@@ -222,3 +222,55 @@ def test_sender_emit_before_send_order(monkeypatch):
     monkeypatch.delenv("EXEC_GATE", raising=False)
     _, _, order = _run_sender_pattern(True, None, monkeypatch)
     assert order == ["emit", "send"]
+
+
+# ── shadowing 회귀 (2026-08-27) ──────────────────────────────────────
+# 발신 스크립트들이 실행 중 다른 repo(wf-sync·sns-tracker)를 sys.path[0]에 삽입한다.
+# exec_events를 지연 import하면 그 시점엔 외부 사본이 이름을 가로챈다(7/27 실사고 부류).
+# 방어 = 각 발신 파일이 exec_events를 **톱레벨에서** import해 sys.modules를 선점.
+
+def test_senders_import_exec_events_at_module_top():
+    import ast
+    from pathlib import Path
+    root = Path(__file__).parent
+    for name in ("daily_review.py", "evening_sync.py", "morning_brief.py", "weekly_retro.py"):
+        tree = ast.parse((root / name).read_text())
+        top_imports = [n for n in tree.body if isinstance(n, ast.Import)
+                       and any(a.name == "exec_events" for a in n.names)]
+        assert top_imports, f"{name}: 톱레벨 `import exec_events`가 없다 — shadowing 재발 위험"
+
+
+def test_gate_behavior_matches_sibling_repo_copies():
+    """이 맥에 있는 사본(wf-sync·sns-tracker)의 exec_gate_suppresses가 원본과 동일 행동인지.
+
+    사본이 없으면 건너뛴다(맥별 구성 차이 허용). 드리프트가 생기면 여기서 잡는다."""
+    import importlib.util
+    import itertools
+    import os
+    from pathlib import Path
+
+    import exec_events as origin
+
+    def table(mod):
+        rows = []
+        for gate, emitted in itertools.product(["on", "ON ", "off", "", "weird"], [True, False]):
+            old = os.environ.get("EXEC_GATE")
+            os.environ["EXEC_GATE"] = gate
+            try:
+                rows.append((gate, emitted, mod.exec_gate_suppresses(emitted)))
+            finally:
+                if old is None:
+                    os.environ.pop("EXEC_GATE", None)
+                else:
+                    os.environ["EXEC_GATE"] = old
+        return rows
+
+    base = table(origin)
+    for sibling in (Path.home() / "wf-sync" / "exec_events.py",
+                    Path.home() / "sns-tracker" / "exec_events.py"):
+        if not sibling.exists():
+            continue
+        spec = importlib.util.spec_from_file_location(f"ee_sibling_{sibling.parent.name}", sibling)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        assert table(mod) == base, f"{sibling}: exec_gate_suppresses 행동 드리프트"
