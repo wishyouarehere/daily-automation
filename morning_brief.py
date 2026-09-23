@@ -76,9 +76,18 @@ question: 오늘 하루를 시작하며 스스로에게 던질 질문 하나(~50
 [최근 회의록 (2일)]
 {material['meetings'] or '없음'}
 
-[어제 Jay가 AI와 한 작업 (코덱스·클로드 세션 제목과 첫 요청)]
+[어제 하루 기록 (GPT 워크·클로드 세션 결과 요약, 없으면 세션 제목)]
 {material['sessions'] or '없음'}
 """
+
+
+def _yesterday_log(today: date) -> str:
+    """00:15에 만든 전날 하루 기록(요약·세션 결과). 없으면 ""."""
+    try:
+        import day_log
+        return day_log.read(today - timedelta(days=1))[:12000]
+    except Exception:
+        return ""
 
 
 def build(today: date) -> tuple[str, dict]:
@@ -93,7 +102,7 @@ def build(today: date) -> tuple[str, dict]:
             "daily": "\n\n".join(filter(None, [S.workflowy_daily(today - timedelta(days=1)),
                                                S.workflowy_daily(today)])),
             "meetings": S.meetings(days=2),
-            "sessions": "\n".join(S.ai_sessions(start - timedelta(days=1), start)),
+            "sessions": _yesterday_log(today) or "\n".join(S.ai_sessions(start - timedelta(days=1), start)),
         })
 
     cands = J.quote_candidates()

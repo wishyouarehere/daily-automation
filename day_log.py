@@ -11,7 +11,7 @@
 세션별로 시각·제목·요청·결과 한두 줄만 남긴다. 원문은 원래 폴더에 있고 경로만 적는다.
 결과 요약은 하루 한 번 구독 claude -p(sonnet). 토큰·키 모양 문자열은 지운다.
 
-cron(회사맥): 매일 23:40 오늘 날짜. 드라이런: DRY_RUN=1 python day_log.py [YYYY-MM-DD]
+cron(회사맥): 매일 00:15 전날 기록(--yesterday). 드라이런: DRY_RUN=1 python day_log.py [YYYY-MM-DD]
 상대 맥 수집용: python day_log.py collect YYYY-MM-DD   (JSON 출력)
 """
 from __future__ import annotations
@@ -329,7 +329,10 @@ def main(argv: list[str]) -> int:
     if argv and argv[0] == "collect":
         print(json.dumps(collect_local(date.fromisoformat(argv[1])), ensure_ascii=False))
         return 0
-    day = date.fromisoformat(argv[0]) if argv else datetime.now(KST).date()
+    if argv and argv[0] == "--yesterday":
+        day = datetime.now(KST).date() - timedelta(days=1)
+    else:
+        day = date.fromisoformat(argv[0]) if argv else datetime.now(KST).date()
     text = build(day)
     if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
         print(text)

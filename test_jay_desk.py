@@ -161,6 +161,20 @@ def test_underline_candidate_keeps_letters():
         assert "9/18에 찍은 페이지" in msg and "a&lt;b" in msg and "❤️" in msg
 
 
+def test_day_log_scrubs_secrets_and_morning_falls_back():
+    import day_log
+    assert "[지움]" in day_log.scrub("token sk-abcdefghijklmnopqrstuv 끝")
+    assert day_log.scrub("평범한 문장") == "평범한 문장"
+    with _Env():
+        orig = morning_brief._yesterday_log
+        morning_brief._yesterday_log = lambda d: ""
+        try:
+            msg, _ = morning_brief.build(date(2026, 9, 23))
+            assert "<b>오늘</b>" in msg
+        finally:
+            morning_brief._yesterday_log = orig
+
+
 def test_html_escaping_of_model_output():
     assert jay_desk.clean("**<script>** #채널") == "&lt;script&gt; #채널"
 
