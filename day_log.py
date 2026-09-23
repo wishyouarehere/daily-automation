@@ -6,7 +6,8 @@
 재료(두 맥):
   - GPT 워크 = ~/.codex/sessions (originator codex_work_desktop 등 사람 세션만)
   - 클로드 CLI = ~/.claude/projects/*/*.jsonl (자동화 -p 세션 제외)
-  - 클로드 앱 = 앱이 obsidian-write로 남긴 하루기록/클로드앱-수신함.md의 그날 줄
+  - 클로드 앱 = 앱이 구글 드라이브에 만든 `[하루기록] 날짜 시각 | 주제` 문서(폰·맥 공통)
+    + 볼트 하루기록/클로드앱-수신함.md의 그날 줄(맥 앱 obsidian-write 보조 경로)
   - PLAUD = 볼트 회의록/
 세션별로 시각·제목·요청·결과 한두 줄만 남긴다. 원문은 원래 폴더에 있고 경로만 적는다.
 결과 요약은 하루 한 번 구독 claude -p(sonnet). 토큰·키 모양 문자열은 지운다.
@@ -216,6 +217,42 @@ def app_lines(day: date) -> list[str]:
     return [l.strip() for l in text.splitlines() if l.strip().startswith(f"- {key}")]
 
 
+def drive_app_entries(day: date) -> list[str]:
+    """클로드 앱(폰·맥)이 구글 드라이브에 만든 `[하루기록] YYYY-MM-DD HH:MM | 주제` 문서들.
+
+    앱의 드라이브 커넥터는 새 파일 생성만 되고, 자체 OAuth(drive.file)로는 남이 만든 파일을
+    못 읽는다. 그래서 구독 claude(네이티브 바이너리)의 claude.ai 드라이브 커넥터로 읽는다.
+    도구는 검색·읽기 두 개만 허용. 실패하면 []."""
+    binary = next((b for b in ("/opt/homebrew/bin/claude", str(HOME / ".local/share/claude/claude"))
+                   if os.path.exists(b)), None)
+    if not binary:
+        return []
+    key = f"[하루기록] {day.isoformat()}"
+    prompt = (f"Google Drive 커넥터로 제목에 '{key}'가 들어간 파일을 모두 찾고(ToolSearch로 "
+              "Google_Drive search_files·read_file_content 도구를 먼저 불러온다) 각 파일 내용을 읽는다. "
+              "출력은 JSON 배열 하나만: [{\"title\": \"...\", \"content\": \"...\"}]. "
+              "없으면 []. 파일을 만들거나 고치지 않는다.")
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    try:
+        r = subprocess.run([binary, "-p", prompt, "--model", "haiku", "--output-format", "text",
+                            "--allowedTools", "ToolSearch,mcp__claude_ai_Google_Drive__search_files,"
+                            "mcp__claude_ai_Google_Drive__read_file_content"],
+                           capture_output=True, text=True, timeout=240, env=env, cwd="/tmp")
+        t = r.stdout.strip()
+        a = t.find("[")
+        rows = json.JSONDecoder().raw_decode(t[a:])[0] if a != -1 else []
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 드라이브 수신함 읽기 실패: {e}", file=sys.stderr)
+        return []
+    out = []
+    for row in rows:
+        title = nfc(str(row.get("title", ""))).replace("[하루기록]", "").strip()
+        body = " ".join(nfc(str(row.get("content", ""))).split())
+        if title.startswith(day.isoformat()):
+            out.append(scrub(f"- {title}" + (f" | {_clip(body, 300)}" if body and body not in title else "")))
+    return sorted(out)
+
+
 # ── 요약 (하루 한 번 구독 -p) ──────────────────────────────────────
 def summarize(day: date, sessions: list[dict], meets: list[dict], app: list[str]) -> dict:
     if not (sessions or meets or app):
@@ -312,7 +349,7 @@ def write(day: date, text: str) -> Path:
 def build(day: date) -> str:
     sessions = collect_all(day)
     meets = meetings(day)
-    app = app_lines(day)
+    app = sorted(set(app_lines(day) + drive_app_entries(day)))
     summ = summarize(day, sessions, meets, app)
     return render(day, sessions, meets, app, summ)
 
