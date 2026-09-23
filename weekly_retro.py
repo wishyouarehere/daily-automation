@@ -479,6 +479,13 @@ def main():
         sys.exit(0)
 
     now = datetime.now(KST)
+    # 🔴 근무일 가드는 주간 잠금보다 먼저 — 잠금 뒤에 두면 월요일 실행이 그 주 잠금을 선점해
+    # 실제 마지막 근무일에 회고가 안 만들어진다. cron은 월~금 매일 부르고 여기서 거른다(2026-09-23).
+    if "--only-last-workday" in sys.argv:
+        import work_calendar
+        if not work_calendar.is_last_workday_of_week(now.date()):
+            print(f"SKIP: {now:%m/%d}은 이번 주 마지막 근무일이 아님 — 회고는 마지막 근무일에.", file=sys.stderr)
+            sys.exit(0)
     if not acquire_week_lock(now):
         print(f"SKIP: 이번 주 이미 생성됨 — 중복 무시.", file=sys.stderr)
         sys.exit(0)

@@ -37,11 +37,26 @@ def now() -> datetime:
 
 
 def is_weekend(d: date) -> bool:
-    return d.weekday() >= 5
+    """쉬는 날(토·일·공휴일·대체공휴일·설정한 휴무)이면 True — 주말 모드(문장·질문만)."""
+    try:
+        import work_calendar
+        return not work_calendar.is_workday(d)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 근무일 판정 실패 — 토·일만 쉬는 날로 봄: {e}", file=sys.stderr)
+        return d.weekday() >= 5
 
 
 def date_label(d: date) -> str:
-    return f"{d.month}/{d.day} {WEEKDAY_KR[d.weekday()]}"
+    """'9/24 목' + 공휴일이면 ' · 추석 연휴'."""
+    label = f"{d.month}/{d.day} {WEEKDAY_KR[d.weekday()]}"
+    try:
+        import work_calendar
+        reason = work_calendar.day_off_reason(d)
+        if reason and reason not in ("토요일", "일요일"):
+            label += f" · {reason}"
+    except Exception:
+        pass
+    return label
 
 
 # ── 텔레그램 (치프봇 직접 발송 — 개인 메시지라 운영 게이트를 거치지 않는다) ──

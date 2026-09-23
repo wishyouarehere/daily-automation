@@ -119,7 +119,7 @@ def test_focus_needs_source_and_weekend_drops_it():
         assert "오늘 짚을 것" not in msg  # 출처 없는 판단은 버린다
         assert "방해물이 곧 길이다." in msg and "어떤 태도로" in msg
         env.answer["focus"]["source"] = "Slack #tech-dev 9/22"
-        msg, _ = morning_brief.build(date(2026, 9, 24))
+        msg, _ = morning_brief.build(date(2026, 9, 22))
         assert "근거: Slack #tech-dev 9/22" in msg
         msg, meta = morning_brief.build(date(2026, 9, 27))
         assert meta["weekend"] and "오늘 짚을 것" not in msg and "<b>오늘</b>" not in msg
@@ -173,6 +173,18 @@ def test_day_log_scrubs_secrets_and_morning_falls_back():
             assert "<b>오늘</b>" in msg
         finally:
             morning_brief._yesterday_log = orig
+
+
+def test_holiday_is_weekend_mode_with_label():
+    with _Env() as env:
+        env.answer = {"quote_id": "스토아#1", "question": "q",
+                      "focus": {"headline": "배포", "line": "x", "source": "Slack"}}
+        msg, meta = morning_brief.build(date(2026, 9, 24))      # 추석 연휴(목)
+        assert meta["weekend"] and "추석 연휴" in msg and "<b>오늘</b>" not in msg and "짚을 것" not in msg
+        msg, meta = morning_brief.build(date(2026, 10, 5))      # 대체공휴일(월)
+        assert meta["weekend"] and "쉬는 날 개천절" in msg
+        msg, meta = morning_brief.build(date(2026, 10, 6))      # 근무일(화)
+        assert not meta["weekend"] and "<b>오늘</b>" in msg
 
 
 def test_html_escaping_of_model_output():
