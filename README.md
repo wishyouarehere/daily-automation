@@ -1,13 +1,13 @@
 # daily-automation
 
 CPO 개인 생산성 자동화 프로젝트.
-매일 아침 브리핑 텔레그램 봇과 저녁 Todoist→Obsidian 자동 기록을 실행합니다.
+매일 아침 `JAY DESK` 텔레그램 한 통과 저녁 Todoist→Obsidian 자동 기록을 실행합니다.
 
 ## 스크립트
 
 | 스크립트 | 설명 | 실행 시각 |
 |---|---|---|
-| `morning_brief.py` | 날씨 / 캘린더 / 할 일 → 텔레그램 전송 | 07:30 KST |
+| `morning_brief.py` | 일정·할 일·참모실 결정 후보 → JAY DESK 단일 출력 | 06:30 KST |
 | `evening_sync.py` | Todoist 완료 항목 → Obsidian Daily Note | 22:00 KST |
 | `auth_google.py` | Google OAuth2 refresh_token 발급 (최초 1회) | 수동 |
 

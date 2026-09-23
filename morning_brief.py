@@ -1,6 +1,6 @@
 """
-아침 브리핑 텔레그램 봇 — 참모 브리핑 형식(3블록).
-매일 06:30 KST. ① 오늘 한눈에(무게중심·시간표·꼭할일·내일) ② 참모 판단(결정+레벨) ③ 백그라운드(접이식).
+JAY DESK 아침 출력 — 하루 한 번, Jay가 실제로 볼 것만 전달한다.
+매일 06:30 KST. ① 오늘 한눈에(무게중심·시간표·꼭할일·내일) ② 오늘 볼 것(결정+레벨) ③ 백그라운드(접이식).
 
 설계 원칙: 데이터 덤프가 아니라 '판단'이 본체. 원천 데이터는 압축하거나 접는다.
 요일 변주: 월=위클리 대비 / 금=주간 회고 / 주말=경량. (골격 고정, 블록 ②만 성격 변형)
@@ -74,11 +74,11 @@ def send_telegram(text: str) -> None:
 
 
 def send_error(context: str, error: Exception) -> None:
-    msg = f"⚠️ <b>[morning_brief 오류]</b>\n{context}\n<code>{type(error).__name__}: {error}</code>"
-    try:
-        send_telegram(msg)
-    except Exception:
-        pass
+    """부분 입력 실패는 별도 Telegram이 아니라 운영 로그로만 남긴다.
+
+    조립 자체가 실패하면 main()이 non-zero로 종료해 guardian이 지속 장애만
+    승격한다. 한 소스의 일시 실패가 아침 메시지를 두 통으로 만드는 경로는 없다.
+    """
     print(f"ERROR [{context}]: {error}", file=sys.stderr)
 
 
@@ -488,13 +488,17 @@ def _parse_brief_json(text: str) -> dict:
 
 def get_chief_brief(mode: str, pack: str, context_text: str, pending: list[str],
                     weekly: list[str], daily_text: str, today_cal: str,
-                    todo_items: list[dict]) -> tuple[str, list[dict]]:
+                    todo_items: list[dict],
+                    staff_decisions: list[str] | None = None) -> tuple[str, list[dict]]:
     """무게중심 한 줄 + 판단 0~3건을 한 번에 생성. (weight, calls) 반환.
     calls=[{headline, points, level}] — headline=스캔용 굵은 제목, points=짧은 불릿 리스트."""
     ctx = pack or context_text
     pending_text = "\n".join(f"- {p}" for p in pending[:8]) or "없음"
     weekly_text = "\n".join(f"- {w}" for w in weekly[:6]) or "없음"
     todo_text = "\n".join(f"- {it['content']}" for it in todo_items[:10]) or "없음"
+    staff_decision_text = "\n".join(
+        f"- {item}" for item in (staff_decisions or [])[:3]
+    ) or "없음"
 
     if not ctx and not pending and not daily_text and not todo_items:
         return "", []  # 근거 없음 → 억지 생성 안 함
@@ -516,6 +520,8 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
 규칙:
 - 억지로 채우지 마라. 마땅한 게 1개면 1개, 없으면 calls는 빈 배열 [].
 - 근거 없는 단정·맥락에 없는 항목 생성 절대 금지.
+- [참모실 결정 후보]는 오늘 먼저 계산된 후보다. 다른 근거와 대조해 유효하면 calls에
+  통합하고, 이미 끝났거나 근거가 약하면 버려라. 같은 사안을 표현만 바꿔 중복하지 마라.
 - 오늘 일정과 교차해라(예: 오늘 그 회의 있으면 "거기서 처리").
 - 전체(weight+calls) 900자 이내. 넘으면 설명을 줄이지 말고 calls 개수를 줄여라.
 - 결론 먼저, 컴팩트하게. 군더더기·마크다운 기호 금지.
@@ -527,6 +533,9 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
 
 [열린 막힘·결정 대기 (_INDEX)]
 {pending_text}
+
+[참모실 결정 후보]
+{staff_decision_text}
 
 [이번 주 포커스 (_INDEX)]
 {weekly_text}
@@ -576,16 +585,15 @@ calls: 오늘 짚을 것 0~3개. 가장 시급·비가역한 것부터.
 
 
 # ── 블록 ② 참모 판단 렌더 ─────────────────────────────────────────
-_BLOCK2_HEADER = {"standard": "참모 판단", "monday": "위클리 대비", "friday": "주간 회고"}
+_BLOCK2_HEADER = {"standard": "오늘 볼 것", "monday": "위클리 대비", "friday": "주간 회고"}
 _DIVIDER = "━━━━━━━━━━"
 
 
-def render_block2(mode: str, calls: list[dict]) -> str:
+def render_block2(mode: str, calls: list[dict], pending_line: str | None = None) -> str:
     head = f"{_DIVIDER}\n🎩 <b>{_BLOCK2_HEADER.get(mode, '참모 판단')}</b>   ·   {dday_label()}"
-    pending = get_pending_decisions_line()
-    if pending:
-        head = head + "\n" + pending
     if not calls:
+        if pending_line:
+            return head + "\n\n" + pending_line
         return head + "\n\n오늘 급한 결정 없음 — 오전 집중블록 확보."
     items = []
     for i, c in enumerate(calls, 1):
@@ -653,26 +661,46 @@ def get_csc_condition_line():
         return None
 
 
-def get_pending_decisions_line():
-    """결정대기열 스냅샷(지표 버스 ~/metrics-exchange) → '대기 중 결정' 한 줄 (W0-3, 2026-07-05).
-    회사맥이 발행한 decisions 스냅샷({"items":[제목들], "count":N})을 읽어 최대 3건 + 외 N건.
-    스냅샷 없음/파손/빈 큐면 None(브리핑은 그대로 감)."""
+def get_pending_decisions_snapshot() -> tuple[list[str], int, float | None]:
+    """참모실 결정 스냅샷을 (최대 3개 제목, 전체 건수, age_hours)로 읽는다."""
     try:
         p = os.path.expanduser("~/metrics-exchange/snapshots/decisions.json")
         with open(p) as f:
             payload = json.load(f)
-        d = payload.get("data") or {}
-        items = [str(t) for t in (d.get("items") or []) if t]
-        count = d.get("count", len(items))
+        data = payload.get("data") or {}
+        if isinstance(data.get("open_decisions"), list):
+            raw_items = data["open_decisions"]
+            items = []
+            for item in raw_items:
+                title = item.get("title", "") if isinstance(item, dict) else item
+                if str(title).strip():
+                    items.append(str(title).strip())
+            count = len(raw_items)
+        else:
+            # 2026-08 이전 스냅샷 계약도 계속 읽는다.
+            items = [str(t).strip() for t in (data.get("items") or []) if str(t).strip()]
+            count = int(data.get("count", len(items)) or 0)
+        ts = datetime.fromisoformat(payload["ts"])
+        age_h = (datetime.now(ts.tzinfo) - ts).total_seconds() / 3600
+        return items[:3], count, age_h
+    except Exception:
+        return [], 0, None
+
+
+def get_pending_decisions_line(
+    snapshot: tuple[list[str], int, float | None] | None = None,
+):
+    """결정대기열 스냅샷(지표 버스 ~/metrics-exchange) → '대기 중 결정' 한 줄 (W0-3, 2026-07-05).
+    회사맥이 발행한 decisions 스냅샷(open_decisions)을 읽어 최대 3건 + 외 N건.
+    스냅샷 없음/파손/빈 큐면 None(브리핑은 그대로 감)."""
+    try:
+        shown, count, age_h = snapshot or get_pending_decisions_snapshot()
         if not count:
             return None
-        shown = items[:3]
         titles = " · ".join(escape(t) for t in shown)
         body = f": {titles}" if titles else ""
         tail = f" 외 {count - len(shown)}건" if count > len(shown) else ""
-        ts = datetime.fromisoformat(payload["ts"])
-        age_h = (datetime.now(ts.tzinfo) - ts).total_seconds() / 3600
-        stale = f" · {int(age_h)}시간 전 기준" if age_h > 24 else ""
+        stale = f" · {int(age_h)}시간 전 기준" if age_h is not None and age_h > 24 else ""
         return f"📋 대기 중 결정 {count}건{body}{tail}{stale}"
     except Exception:
         return None
@@ -689,7 +717,7 @@ def build_message() -> str:
     weather_tag = get_weather_tag()
     today_sched, tomorrow_oneline, today_cal = get_schedule_section()
     todo_items = get_todoist_today_items()
-    header = f"📋 <b>{date_str}</b>" + (f"   ·   {weather_tag}" if weather_tag else "")
+    header = f"🗂 <b>JAY DESK · {date_str}</b>" + (f"   ·   {weather_tag}" if weather_tag else "")
     sched_block = f"<b>오늘</b>\n{today_sched}"
     tomorrow_block = f"<b>내일</b>\n  {tomorrow_oneline}"
 
@@ -715,9 +743,12 @@ def build_message() -> str:
     pending = get_index_pending(index_text)
     weekly = get_index_weekly(index_text)
     pack = load_chief_pack()
+    decision_snapshot = get_pending_decisions_snapshot()
+    staff_decisions, staff_decision_count, _ = decision_snapshot
 
     weight, calls = get_chief_brief(
         mode, pack, context_text, pending, weekly, daily_text, today_cal, todo_items,
+        staff_decisions,
     )
 
     # 블록 ① — 라벨 섹션을 빈 줄로 띄워 시원하게
@@ -731,25 +762,30 @@ def build_message() -> str:
     block1 = "\n\n".join(parts)
 
     # 블록 ②
-    block2 = render_block2(mode, calls)
+    block2 = render_block2(
+        mode,
+        calls,
+        pending_line=get_pending_decisions_line(decision_snapshot),
+    )
 
     # 블록 ③ (접이식)
     done = get_todoist_completed_yesterday()
     freshness = get_freshness_warning()
     block3 = render_block3(done, weekly, freshness)
 
-    return f"{block1}\n\n\n{block2}\n\n\n{block3}", {"mode": mode, "decision_count": len(calls)}
+    decision_count = len(calls) if calls else staff_decision_count
+    return f"{block1}\n\n\n{block2}\n\n\n{block3}", {"mode": mode, "decision_count": decision_count}
 
 
-def main():
+def main() -> int:
     try:
         message, _meta = build_message()
     except Exception as e:
         send_error("브리핑 조립", e)
-        return
+        return 1
     if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
         print(message)
-        return
+        return 0
     from exec_events import exec_gate_suppresses
     _emitted = False
     try:
@@ -775,8 +811,9 @@ def main():
         _emitted = False
     if not exec_gate_suppresses(_emitted):
         send_telegram(message)
-    print("✅ 아침 브리핑 전송 완료")
+    print("✅ JAY DESK 전송 완료")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
