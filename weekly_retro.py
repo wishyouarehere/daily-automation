@@ -22,12 +22,14 @@
 """
 
 import glob
+import json
 import os
 import re
 import sys
 import exec_events  # 🔴 톱레벨 고정: 이후 sys.path.insert(0, 다른 repo)가 같은 이름의 외부 사본을 가리지 못하게 먼저 sys.modules에 올려둔다
 import unicodedata
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -420,6 +422,22 @@ def sns_weekly_block(monday) -> str:
 
 
 # ── 메인 ──────────────────────────────────────────────────────────
+def time_audit_block(monday) -> str:
+    """staff-office time_audit(금 18:10, --to-state)가 남긴 이번 주 시간 배분 분석을 붙인다.
+
+    2026-09-23 타임오딧 단독 텔레그램을 은퇴하고 주간회고 초안에 합쳤다. 이번 주 결과가 없으면 "".
+    """
+    try:
+        p = Path.home() / "staff-office" / "state" / "time_audit_latest.json"
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if d.get("week_start") != monday.strftime("%Y-%m-%d") or not d.get("text"):
+            return ""
+        text = re.sub(r"<[^>]+>", "", d["text"]).strip()
+        return "\n\n## 이번 주 시간 배분 (타임오딧)\n\n" + text + "\n"
+    except Exception:
+        return ""
+
+
 def main():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -496,7 +514,7 @@ def main():
     fname = (f"Week{week_n}-주간회고-{monday.strftime('%m%d')}-"
              f"{now.strftime('%m%d')}-draft.md")
     out_path = WEEKLY_DIR / fname
-    final = body + "\n" + sns_weekly_block(monday)
+    final = body + "\n" + sns_weekly_block(monday) + time_audit_block(monday)
 
     if DRY:
         print(f"\n===== [DRY] 저장 예정: {fname} (Slack: {slack_state} · Docs: {docs_state}) =====\n")
