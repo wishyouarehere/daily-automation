@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>다시, 여기</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600&display=swap">
+<style>
+  :root {
+    --paper: #f6f6f2;
+    --ink: #232320;
+    --ink-soft: #6f6f68;
+    --rule: #d9d9d2;
+    --blue: #2f4a7a;
+    --blue-soft: #e4e9f2;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #17171a;
+      --ink: #e6e6df;
+      --ink-soft: #8f8f88;
+      --rule: #2e2e33;
+      --blue: #9db0d8;
+      --blue-soft: #232a3a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #17171a;
+    --ink: #e6e6df;
+    --ink-soft: #8f8f88;
+    --rule: #2e2e33;
+    --blue: #9db0d8;
+    --blue-soft: #232a3a;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Noto Serif KR", "Apple SD Gothic Neo", "Nanum Myeongjo", serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+    z-index: 2;
+  }
+  .bar {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 14px 20px 0;
+  }
+  .bar h1 {
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--ink-soft);
+    letter-spacing: 0.02em;
+  }
+  .bar h1 span { color: var(--ink); font-weight: 600; }
+  nav {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav button {
+    flex: 0 0 auto;
+    appearance: none;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 8px 12px 10px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ink-soft);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  nav button:first-child { padding-left: 0; }
+  nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--blue); font-weight: 600; }
+  nav button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; border-radius: 4px; }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 36px 20px 80px;
+  }
+  section { display: none; }
+  section.on { display: block; }
+  h2 {
+    font-size: 1.9rem;
+    font-weight: 600;
+    margin: 0 0 28px;
+    line-height: 1.25;
+  }
+  .who {
+    margin: 0 0 30px;
+    color: var(--ink-soft);
+    font-size: 15px;
+  }
+  ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: line;
+  }
+  ol li {
+    counter-increment: line;
+    display: grid;
+    grid-template-columns: 2.2em 1fr;
+    gap: 0 6px;
+    padding: 20px 0;
+    border-top: 1px solid var(--rule);
+    font-size: 1.32rem;
+    line-height: 1.7;
+    word-break: keep-all;
+  }
+  ol li:last-child { border-bottom: 1px solid var(--rule); }
+  ol li::before {
+    content: counter(line);
+    color: var(--blue);
+    font-size: 15px;
+    line-height: 2.4;
+  }
+  .empty { color: var(--ink-soft); font-size: 1.1rem; margin: 0; }
+  .today {
+    margin: 0 0 28px;
+    display: inline-block;
+    background: var(--blue-soft);
+    color: var(--blue);
+    font-size: 14px;
+    padding: 5px 10px;
+    border-radius: 999px;
+  }
+  footer {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 20px 40px;
+    color: var(--ink-soft);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .size {
+    position: fixed;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 6px;
+  }
+  .size button {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .size button:focus-visible { outline: 2px solid var(--blue); }
+  @media (max-width: 480px) {
+    h2 { font-size: 1.65rem; }
+    ol li { font-size: 1.2rem; padding: 16px 0; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    section.on { animation: in .18s ease-out; }
+    @keyframes in { from { opacity: 0; } to { opacity: 1; } }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1><span>다시, 여기</span></h1>
+    <nav role="tablist" id="tabs"></nav>
+  </div>
+</header>
+
+<main id="main"></main>
+<footer>원본은 볼트 「다시-여기」예요. 텔레그램 치프봇에 “다시 추가: 문장” / “다시 빼기: 문장 일부” / “다시 목록”으로 넣고 뺄 수 있어요. · {{STAMP}}</footer>
+
+
+<div class="size" aria-label="글자 크기">
+  <button id="smaller" aria-label="작게">−</button>
+  <button id="bigger" aria-label="크게">+</button>
+</div>
+
+<script>
+const DATA = /*DATA*/[];
+
+const tabs = document.getElementById("tabs");
+const main = document.getElementById("main");
+
+DATA.forEach(d => {
+  const b = document.createElement("button");
+  b.role = "tab"; b.textContent = d.tab; b.dataset.id = d.id;
+  b.addEventListener("click", () => show(d.id));
+  tabs.appendChild(b);
+
+  const s = document.createElement("section");
+  s.id = d.id;
+  const h = document.createElement("h2"); h.textContent = d.title; s.appendChild(h);
+  if (d.lines.length) {
+    const ol = document.createElement("ol");
+    d.lines.forEach(l => { const li = document.createElement("li"); li.textContent = l; ol.appendChild(li); });
+    s.appendChild(ol);
+  } else {
+    const p = document.createElement("p"); p.className = "empty";
+    p.textContent = "아직 없다. 필사하다 걸리는 문장을 여기로 옮긴다."; s.appendChild(p);
+  }
+  main.appendChild(s);
+});
+
+function show(id) {
+  document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === id));
+  tabs.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.id === id));
+  window.scrollTo({ top: 0 });
+  try { localStorage.setItem("pilsa-tab", id); } catch (e) {}
+}
+
+let start = DATA[0].id;
+try { const saved = localStorage.getItem("pilsa-tab"); if (saved && DATA.some(d => d.id === saved)) start = saved; } catch (e) {}
+show(start);
+
+let scale = 1;
+try { scale = parseFloat(localStorage.getItem("pilsa-scale")) || 1; } catch (e) {}
+const apply = () => { document.documentElement.style.fontSize = (100 * scale) + "%"; try { localStorage.setItem("pilsa-scale", scale); } catch (e) {} };
+document.getElementById("bigger").onclick = () => { scale = Math.min(1.5, scale + 0.1); apply(); };
+document.getElementById("smaller").onclick = () => { scale = Math.max(0.8, scale - 0.1); apply(); };
+apply();
+</script>
+</body>
+</html>

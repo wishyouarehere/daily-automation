@@ -18,9 +18,12 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
 
 ## 파일 라우팅
 
-- `morning_brief.py`: 캘린더·Todoist·날씨·wf-sync 문맥을 모아 아침 브리핑 생성.
+- `morning_brief.py`: 치프봇 아침 한 통(문장·오늘 일정·근거 있는 짚을 것 1건·질문).
+- `daily_review.py`: 치프봇 저녁 한 통(오늘 있었던 일·돌아볼 질문·문장).
+- `jay_desk.py`: 아침·저녁 공용 부품(발송·캘린더·문장 선택·구독 LLM·말투 규칙).
+- `desk_sources.py`: 아침·저녁 재료 수집(Daily·회의록·야간참모 후보·결정 노트·AI 세션).
+- `again_bank.py` + `again_page.html`: 볼트 「다시-여기」 문장 DB와 아티팩트 페이지 생성.
 - `evening_sync.py`: Todoist 완료 항목을 Obsidian Daily에 기록.
-- `daily_review.py`: Daily와 컨텍스트를 바탕으로 일간 회고 생성·전송.
 - `regenerate_index.py`: Daily·결정로그·주간회고를 바탕으로 `_INDEX.md` 재생성.
 - `weekly_retro.py`: 주간 자료를 모아 회고 초안 생성.
 - `idea_bot.py`: 텔레그램 입력을 Obsidian에 저장하는 봇.
@@ -35,7 +38,7 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
   메시지나 Obsidian에 쓰지 않는다.
 - 텔레그램 전송, Obsidian 쓰기, 예약 실행은 외부 상태 변경이다. 코드별 안전 모드를
   확인하지 않은 채 직접 실행하지 않는다.
-- 아침 브리핑은 `DRY_RUN=1`을 사용하고, 주간회고는 `WEEKLY_RETRO_DRY=1`을
+- 아침·저녁 한 통은 `DRY_RUN=1`을 사용하고(테스트는 `./venv/bin/python test_jay_desk.py`), 주간회고는 `WEEKLY_RETRO_DRY=1`을
   사용한다. 다른 실행 파일은 전송·쓰기 경로를 읽어 안전성이 확인될 때만 실행한다.
 - 검증은 변경 파일에 가장 가까운 테스트와 안전한 dry-run부터 한다. 검증 중 실제
   메시지를 보내거나 실제 노트를 쓰지 않는다.
