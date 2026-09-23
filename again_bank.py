@@ -31,6 +31,7 @@ BANK_REL = "20-Areas/Personal/다시-여기.md"
 BANK = VAULT / BANK_REL
 DEFAULT_SECTION = "모음"
 EMPTY_MARK = "(아직 없음"
+KEEP_EMPTY = {"아침 1분"}
 
 
 def nfc(s: str) -> str:
@@ -159,6 +160,8 @@ def remove(query: str) -> dict:
         return {"status": "ambiguous", "candidates": [t for _, t in hits[:5]]}
     s, t = hits[0]
     s["lines"].remove(t)
+    if not s["lines"] and s["title"] not in KEEP_EMPTY:
+        sections.remove(s)   # 텔레그램으로 생긴 묶음이 비면 지운다
     _write(_render(head, sections))
     return {"status": "removed", "section": s["title"], "text": t}
 

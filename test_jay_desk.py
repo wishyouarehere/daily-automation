@@ -89,6 +89,10 @@ def test_bank_add_remove_roundtrip():
         assert again_bank.remove("방해물")["status"] == "removed"
         assert [l["text"] for l in again_bank.all_lines()] == [
             "나는 언제든 내 안으로 물러날 수 있다.", "멈추고, 보고, 간다.", "새 문장."]
+        again_bank.remove("새 문장.")
+        again_bank.remove("멈추고")
+        titles = [s["title"] for s in again_bank.load()]
+        assert "모음" not in titles and "아침 1분" in titles   # 빈 묶음은 지우되 아침 1분은 유지
 
 
 def test_html_renders_bank_without_raw_injection():
