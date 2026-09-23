@@ -103,6 +103,12 @@ def mark_offered(uid: str) -> None:
     OFFERED.write_text(json.dumps(ids[-2000:], ensure_ascii=False), encoding="utf-8")
 
 
+def letters_within(part: str, whole: str) -> bool:
+    """part가 whole의 연속 구간인가(공백·줄바꿈 무시). 발췌가 원문 글자를 바꾸지 않았는지 검증."""
+    p = re.sub(r"\s+", "", part or "")
+    return bool(p) and p in re.sub(r"\s+", "", whole or "")
+
+
 def same_letters(a: str, b: str) -> bool:
     """공백·줄바꿈만 다르고 글자는 같은가(OCR 띄어쓰기 교정 검증)."""
     return re.sub(r"\s+", "", a or "") == re.sub(r"\s+", "", b or "")

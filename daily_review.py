@@ -41,8 +41,8 @@ question: 오늘을 돌아보는 질문 하나(~60자). 감정·해석·배움·
 quote_id: [문장 후보] 중 오늘 하루를 닫기에 맞는 문장 id 하나.
 underline_id: [책 밑줄 후보] 중 「다시, 여기」(마음·태도·감사·내면을 다잡는 문장 모음)에 둘 만한 것 하나의 id.
   업무 요령·정보·통계·줄거리 문장은 고르지 않는다. 마땅한 게 없으면 null.
-underline_text: 고른 밑줄 원문에서 OCR 띄어쓰기·줄바꿈 오류만 고친 문장. 글자는 하나도 바꾸거나 빼지 않는다.
-  밑줄이 문장 중간에서 잘려 있으면 원문 그대로 둔다.
+underline_text: 고른 밑줄 원문 안에서 완결된 문장 1~2개만 연속으로 잘라낸 구간. 잘린 조각·앞뒤 문맥은 버린다.
+  OCR 띄어쓰기 오류만 고치고 글자는 하나도 바꾸거나 더하지 않는다. 완결된 문장이 없으면 underline_id도 null.
 
 [책 밑줄 후보]
 {underlines_for_prompt(material.get('underlines') or [])}
@@ -105,13 +105,15 @@ def build(today: date) -> tuple[str, dict]:
 
 
 def _pick_underline(rows: list[dict], data: dict) -> dict | None:
-    """모델이 고른 밑줄. 띄어쓰기 교정본이 원문과 글자가 다르면 원문을 쓴다."""
+    """모델이 고른 밑줄 구간. 공백을 뺀 글자가 원문의 연속 구간일 때만 쓴다."""
     uid = data.get("underline_id")
     row = next((r for r in rows if r["id"] == uid), None) if uid else None
     if not row:
         return None
     fixed = str(data.get("underline_text") or "").strip()
-    text = fixed if fixed and J.same_letters(fixed, row["text"]) else row["text"]
+    if not fixed or not J.letters_within(fixed, row["text"]):
+        return None   # 원문에 없는 글자가 섞이면 제안하지 않는다
+    text = fixed
     return {"id": row["id"], "text": text, "captured": row.get("captured", "")}
 
 

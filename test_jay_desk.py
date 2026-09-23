@@ -148,9 +148,12 @@ def test_underline_candidate_keeps_letters():
                       "underline_id": "U1", "underline_text": "나는 오늘을 산다."}
         _, meta = daily_review.build(date(2026, 9, 23))
         assert meta["candidate"]["text"] == "나는 오늘을 산다."   # 띄어쓰기만 고침
-        env.answer["underline_text"] = "나는 내일을 산다."          # 글자 바뀜 → 원문 유지
+        env.answer["underline_text"] = "나는 내일을 산다."          # 글자 바뀜 → 제안 안 함
         _, meta = daily_review.build(date(2026, 9, 24))
-        assert meta["candidate"]["text"] == "나는 오늘 을 산다."
+        assert meta["candidate"] is None
+        env.answer["underline_text"] = "오늘을 산다."               # 연속 구간 발췌는 허용
+        _, meta = daily_review.build(date(2026, 9, 26))
+        assert meta["candidate"]["text"] == "오늘을 산다."
         env.answer["underline_id"] = None
         _, meta = daily_review.build(date(2026, 9, 25))
         assert meta["candidate"] is None
