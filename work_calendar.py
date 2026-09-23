@@ -6,6 +6,7 @@
 회사 자체 휴무·개인 연차는 ~/.config/jay-workdays.json으로 더하거나 뺀다:
     {"off": {"2026-10-02": "회사 휴무"}, "work": ["2026-05-01"]}
 
+Jay 연차: DP Calendar의 '[휴무] 장홍석 연차/휴가'(반차 제외, 본인 일정만), 6시간 캐시 ~/.local/state/jay-desk/leave.json.
 쓰는 곳: 주간회고·타임오딧(그 주 마지막 근무일), 월요일 브리프(그 주 첫 근무일), 아침·저녁 한 통(휴일=주말 모드).
 CLI: python work_calendar.py [YYYY-MM-DD]   # 그 주 근무일·판정 출력
      python work_calendar.py --gate last|first [YYYY-MM-DD]   # 해당하면 exit 0, 아니면 1 (cron 가드용)
@@ -23,6 +24,11 @@ CAL_ID = "ko.south_korea.official#holiday@group.v.calendar.google.com"
 CACHE = Path.home() / ".local/state/jay-desk/holidays.json"
 OVERRIDES = Path.home() / ".config/jay-workdays.json"
 REFRESH_DAYS = 7
+# Jay 연차(2026-09-23): DP Calendar(회사 공용)의 '[휴무] 장홍석 연차' 같은 하루 종일 일정.
+# Jay 본인 일정만 읽고 저장한다 — 다른 구성원 연차는 버린다. 반차는 근무일로 둔다.
+DP_CAL_ID = "contact@danielproject.co.kr"
+LEAVE_NAME = "장홍석"
+LEAVE_REFRESH_HOURS = 6
 _ENV_DIRS = (Path.home() / "Documents/daily-automation", Path.home() / "daily-automation")
 
 # (시작일, 종료일(미포함), 이름) — 구글 공식 캘린더 그대로
@@ -66,8 +72,7 @@ def _expand(rows) -> dict[str, str]:
     return out
 
 
-def _fetch() -> dict[str, str]:
-    """구글 공식 공휴일 캘린더(올해 1월~내년 12월). 실패하면 예외."""
+def _service():
     from dotenv import load_dotenv
     for d in _ENV_DIRS:
         if (d / ".env").exists():
@@ -80,17 +85,43 @@ def _fetch() -> dict[str, str]:
                         client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
                         token_uri="https://oauth2.googleapis.com/token",
                         scopes=["https://www.googleapis.com/auth/calendar.readonly"])
-    svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    y = datetime.now(KST).year
-    items, token = [], None
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
+def _events(cal_id: str, start: str, end: str) -> list[dict]:
+    svc, items, token = _service(), [], None
     while True:
-        r = svc.events().list(calendarId=CAL_ID, timeMin=f"{y}-01-01T00:00:00+09:00",
-                              timeMax=f"{y + 2}-01-01T00:00:00+09:00", singleEvents=True,
-                              orderBy="startTime", pageToken=token).execute()
+        r = svc.events().list(calendarId=cal_id, timeMin=start, timeMax=end, singleEvents=True,
+                              orderBy="startTime", pageToken=token, maxResults=2500).execute()
         items += r.get("items", [])
         token = r.get("nextPageToken")
         if not token:
-            break
+            return items
+
+
+def parse_leave(items: list[dict], name: str = LEAVE_NAME) -> dict[str, str]:
+    """DP Calendar 일정 → Jay 휴무일 {날짜: '연차'}. 하루 종일·[휴무]·이름 포함·반차 아님만."""
+    rows = []
+    for e in items:
+        title = (e.get("summary") or "").strip()
+        if name not in title or "휴무" not in title or "반차" in title:
+            continue
+        if e.get("status") == "cancelled" or "date" not in (e.get("start") or {}):
+            continue
+        label = "연차" if "연차" in title else ("휴가" if "휴가" in title else "휴무")
+        rows.append((e["start"]["date"], e["end"]["date"], label))
+    return _expand(rows)
+
+
+def _fetch_leave() -> dict[str, str]:
+    y = datetime.now(KST).year
+    return parse_leave(_events(DP_CAL_ID, f"{y}-01-01T00:00:00+09:00", f"{y + 2}-01-01T00:00:00+09:00"))
+
+
+def _fetch() -> dict[str, str]:
+    """구글 공식 공휴일 캘린더(올해 1월~내년 12월). 실패하면 예외."""
+    y = datetime.now(KST).year
+    items = _events(CAL_ID, f"{y}-01-01T00:00:00+09:00", f"{y + 2}-01-01T00:00:00+09:00")
     rows = [(e["start"]["date"], e["end"]["date"], e.get("summary") or "공휴일")
             for e in items if e.get("start", {}).get("date")]
     if not rows:
@@ -129,6 +160,40 @@ def holidays() -> dict[str, str]:
     return merged
 
 
+_leave_memo: dict | None = None
+LEAVE_CACHE = Path.home() / ".local/state/jay-desk/leave.json"
+
+
+def leave_days() -> dict[str, str]:
+    """Jay 연차 {날짜: '연차'}. 6시간 캐시, 실패하면 저장본, 없으면 {}."""
+    global _leave_memo
+    if _leave_memo is not None:
+        return _leave_memo
+    cached, at = {}, None
+    try:
+        c = json.loads(LEAVE_CACHE.read_text(encoding="utf-8"))
+        cached, at = c.get("days") or {}, c.get("fetched_at")
+    except Exception:
+        pass
+    stale = True
+    if at:
+        try:
+            stale = (datetime.now(KST) - datetime.fromisoformat(at)).total_seconds() > LEAVE_REFRESH_HOURS * 3600
+        except ValueError:
+            stale = True
+    if stale:
+        try:
+            cached = _fetch_leave()
+            LEAVE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            LEAVE_CACHE.write_text(json.dumps({"fetched_at": datetime.now(KST).isoformat(), "days": cached},
+                                              ensure_ascii=False), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] DP Calendar 연차 갱신 실패 — {'저장본' if cached else '연차 없음으로'} 판정: {e}",
+                  file=sys.stderr)
+    _leave_memo = cached
+    return cached
+
+
 def _overrides() -> tuple[dict[str, str], set[str]]:
     try:
         o = json.loads(OVERRIDES.read_text(encoding="utf-8"))
@@ -156,6 +221,9 @@ def day_off_reason(d: date) -> str | None:
         return name
     if d.weekday() >= 5:
         return "토요일" if d.weekday() == 5 else "일요일"
+    leave = leave_days().get(key)
+    if leave:
+        return leave
     return None
 
 

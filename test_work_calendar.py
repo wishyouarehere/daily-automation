@@ -17,10 +17,13 @@ def _isolated(overrides=None):
     if overrides is not None:
         W.OVERRIDES.write_text(json.dumps(overrides, ensure_ascii=False))
     W._memo = None
+    W.LEAVE_CACHE = tmp / "leave.json"
+    W._leave_memo = None
 
     def _fail():
         raise RuntimeError("offline")
     W._fetch = _fail
+    W._fetch_leave = _fail
 
 
 def test_chuseok_week_and_substitute_holiday_offline():
@@ -53,6 +56,29 @@ def test_whole_week_off_has_no_last_workday():
     _isolated({"off": {f"2026-10-{d:02d}": "휴가" for d in (5, 6, 7, 8, 9)}})
     assert W.week_workdays(date(2026, 10, 7)) == []
     assert not W.is_last_workday_of_week(date(2026, 10, 8))
+
+
+def test_leave_parsing_only_jay_full_days():
+    items = [
+        {"summary": "[휴무] 장홍석 연차", "start": {"date": "2026-10-02"}, "end": {"date": "2026-10-03"}},
+        {"summary": "[휴무] 장홍석 오후반차", "start": {"date": "2026-09-17"}, "end": {"date": "2026-09-18"}},
+        {"summary": "[휴무] 김영동 연차", "start": {"date": "2026-09-22"}, "end": {"date": "2026-09-23"}},
+        {"summary": "[휴무] 장홍석 여름 휴가", "start": {"date": "2026-08-10"}, "end": {"date": "2026-08-13"}},
+        {"summary": "[휴무] 장홍석 연차", "status": "cancelled", "start": {"date": "2026-11-02"}, "end": {"date": "2026-11-03"}},
+        {"summary": "장홍석 외부 미팅", "start": {"dateTime": "2026-09-30T10:00:00+09:00"}, "end": {"dateTime": "2026-09-30T11:00:00+09:00"}},
+    ]
+    days = W.parse_leave(items)
+    assert days == {"2026-10-02": "연차", "2026-08-10": "휴가", "2026-08-11": "휴가", "2026-08-12": "휴가"}
+
+
+def test_leave_moves_last_workday():
+    _isolated()
+    W.LEAVE_CACHE.write_text(json.dumps({"fetched_at": "2099-01-01T00:00:00+09:00",
+                                         "days": {"2026-10-02": "연차"}}))
+    W._leave_memo = None
+    assert W.day_off_reason(date(2026, 10, 2)) == "연차"
+    assert W.is_last_workday_of_week(date(2026, 10, 1))        # 금요일 연차 → 목요일 회고
+    assert W.day_off_reason(date(2026, 9, 26)) == "추석 연휴"   # 공휴일이 연차보다 먼저
 
 
 if __name__ == "__main__":
