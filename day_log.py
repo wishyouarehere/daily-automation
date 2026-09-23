@@ -149,7 +149,7 @@ def _codex(day: date) -> list[dict]:
                     continue
                 txt = " ".join(x.get("text", "") for x in (p.get("content") or []) if isinstance(x, dict))
                 if p.get("role") == "user":
-                    if txt.strip() and not txt.lstrip().startswith(("<", "#")):
+                    if txt.strip() and not txt.lstrip().startswith(("<", "#", "The following is the Codex")):
                         reqs.append(txt.strip())
                         times.append(t)
                 elif p.get("role") == "assistant" and txt.strip():
