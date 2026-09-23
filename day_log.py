@@ -67,6 +67,13 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def active_minutes(times: list) -> int:
+    """메시지 시각 사이 간격이 10분 이하인 구간만 더한다(자리 비움 제외). 최소 2분."""
+    ts = sorted(times)
+    total = sum((b - a).total_seconds() for a, b in zip(ts, ts[1:]) if (b - a).total_seconds() <= 600)
+    return max(2, round(total / 60))
+
+
 # ── 수집: 이 맥 ────────────────────────────────────────────────────
 def _claude_cli(day: date) -> list[dict]:
     out = []
@@ -79,7 +86,7 @@ def _claude_cli(day: date) -> list[dict]:
             rows = open(f, encoding="utf-8").read().splitlines()
         except OSError:
             continue
-        title, reqs, last, times = "", [], "", []
+        title, reqs, last, times, beats = "", [], "", [], []
         for raw in rows:
             try:
                 o = json.loads(raw)
@@ -92,6 +99,8 @@ def _claude_cli(day: date) -> list[dict]:
             t = _kst(str(o.get("timestamp") or ""))
             if not t or t.date() != day:
                 continue
+            if o.get("type") in ("user", "assistant"):
+                beats.append(t)
             msg = o.get("message") or {}
             c = msg.get("content")
             if o.get("type") == "user" and not o.get("isMeta"):
@@ -109,6 +118,7 @@ def _claude_cli(day: date) -> list[dict]:
         if reqs:
             out.append({"src": "claude_cli", "mac": MAC, "title": title or _clip(reqs[0], 40),
                         "start": min(times).strftime("%H:%M"), "end": max(times).strftime("%H:%M"),
+                        "active": active_minutes(beats or times),
                         "requests": [scrub(_clip(r, 400)) for r in reqs[:12]],
                         "last": scrub(_clip(last, 900)), "path": f.replace(str(HOME), "~")})
     return out
@@ -135,7 +145,7 @@ def _codex(day: date) -> list[dict]:
                 rows = open(f, encoding="utf-8").read().splitlines()
             except OSError:
                 continue
-            origin, sid, reqs, last, times = "", "", [], "", []
+            origin, sid, reqs, last, times, beats = "", "", [], "", [], []
             for raw in rows:
                 try:
                     o = json.loads(raw)
@@ -146,6 +156,8 @@ def _codex(day: date) -> list[dict]:
                     origin, sid = p.get("originator", ""), p.get("id", "")
                     continue
                 t = _kst(str(o.get("timestamp") or ""))
+                if t and t.date() == day:
+                    beats.append(t)
                 if not t or t.date() != day or p.get("type") != "message":
                     continue
                 txt = " ".join(x.get("text", "") for x in (p.get("content") or []) if isinstance(x, dict))
@@ -159,6 +171,7 @@ def _codex(day: date) -> list[dict]:
             if origin in HUMAN_CODEX and reqs:
                 out.append({"src": "codex", "mac": MAC, "title": names.get(sid) or _clip(reqs[0], 40),
                             "start": min(times).strftime("%H:%M"), "end": max(times).strftime("%H:%M"),
+                            "active": active_minutes(beats or times),
                             "requests": [scrub(_clip(r, 400)) for r in reqs[:12]],
                             "last": scrub(_clip(last, 900)), "path": f.replace(str(HOME), "~")})
     return out
@@ -270,10 +283,11 @@ def summarize(day: date, sessions: list[dict], meets: list[dict], app: list[str]
 아래는 그날 Jay가 AI 도구와 한 세션(S)과 회의(M)의 요청·마지막 답·회의록이다.
 
 출력은 JSON 객체 하나만:
-{{"overview": ["...", "..."], "sessions": {{"S1": "...", ...}}, "meetings": {{"M1": "...", ...}}}}
+{{"overview": ["...", "..."], "sessions": {{"S1": "...", ...}}, "categories": {{"S1": "회사", ...}}, "meetings": {{"M1": "...", ...}}}}
 
 overview: 그날 Jay가 실제로 한 일의 큰 줄기 2~4줄(각 ~60자). 무엇을 결정·완성·논의했는지.
 sessions: 세션마다 무엇을 했고 어떻게 끝났는지 한두 문장(~80자). 요청만 있고 결론이 없으면 "진행 중"이라고 쓴다.
+categories: 세션마다 하나 — "회사"(다니엘·데이원·조직·회사 대시보드 등 회사 일), "개인 툴"(개인 자동화·봇·SNS 트래커·자산 등 Jay 개인 도구 개발), "글쓰기·건강"(글쓰기·콘텐츠·건강·개인 생활), "기타".
 meetings: 회의마다 결론·결정 한두 문장(~80자). 결론이 없으면 "논의만"이라고 쓴다.
 규칙: 재료에 있는 사실만. 평가·조언·추측 금지. 사람 이름은 재료에 적힌 그대로. 해요체 대신 간결한 기록체(~했다, ~함).
 
@@ -322,7 +336,9 @@ def render(day: date, sessions: list[dict], meets: list[dict], app: list[str], s
             continue
         for i, s in rows:
             res = sm.get(f"S{i}", "")
-            out.append(f"- {s['start']}–{s['end']} **{s['title']}** ({s['mac']}맥)")
+            cat = (summ.get("categories") or {}).get(f"S{i}", "")
+            out.append(f"- {s['start']}–{s['end']} **{s['title']}** ({s['mac']}맥 · 활동 {s.get('active', 0)}분"
+                       + (f" · {cat}" if cat else "") + ")")
             out.append(f"  - 요청: {_clip(s['requests'][0], 160)}")
             if res:
                 out.append(f"  - 결과: {scrub(res)}")
@@ -346,12 +362,77 @@ def write(day: date, text: str) -> Path:
     return path
 
 
+DATA_DIR = HOME / ".local/state/jay-desk/daylog"
+
+
 def build(day: date) -> str:
     sessions = collect_all(day)
     meets = meetings(day)
     app = sorted(set(app_lines(day) + drive_app_entries(day)))
     summ = summarize(day, sessions, meets, app)
+    cats = summ.get("categories") or {}
+    _LAST_DATA.update({"date": day.isoformat(), "meetings": len(meets), "app": len(app),
+                       "sessions": [{"title": s["title"], "src": s["src"], "active": s.get("active", 0),
+                                     "category": cats.get(f"S{i}", "기타")}
+                                    for i, s in enumerate(sessions, 1)]})
     return render(day, sessions, meets, app, summ)
+
+
+_LAST_DATA: dict = {}
+
+
+def save_data() -> None:
+    """시간 거울용 수치(세션 제목·활동분·분류)를 회사맥 state에 남긴다."""
+    if not _LAST_DATA:
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / f"{_LAST_DATA['date']}.json").write_text(
+        json.dumps(_LAST_DATA, ensure_ascii=False), encoding="utf-8")
+
+
+def week_logs(start: date, days: int = 7, cap: int = 30000) -> str:
+    """start부터 days일의 하루 기록 본문(원문 경로 줄 제외)을 이어 붙인다. 월요일 브리프·주간회고 재료."""
+    chunks, total = [], 0
+    for i in range(days):
+        body = read(start + timedelta(days=i))
+        if not body:
+            continue
+        body = re.sub(r"^---\n.*?\n---\n", "", body, flags=re.S)
+        body = "\n".join(l for l in body.splitlines() if not l.strip().startswith("- 원문:"))
+        if total + len(body) > cap:
+            break
+        chunks.append(body.strip())
+        total += len(body)
+    return "\n\n".join(chunks)
+
+
+def time_mirror(start: date, days: int = 7) -> str:
+    """한 주 AI 작업 시간 배분(메시지 간격 10분 이하만 합산). 데이터 없으면 ""."""
+    rows, meets, app = [], 0, 0
+    for i in range(days):
+        try:
+            d = json.loads((DATA_DIR / f"{(start + timedelta(days=i)).isoformat()}.json").read_text())
+        except Exception:
+            continue
+        rows += d.get("sessions", [])
+        meets += d.get("meetings", 0)
+        app += d.get("app", 0)
+    total = sum(r.get("active", 0) for r in rows)
+    if not total:
+        return ""
+    by_cat: dict = {}
+    for r in rows:
+        by_cat[r.get("category") or "기타"] = by_cat.get(r.get("category") or "기타", 0) + r.get("active", 0)
+    share = " · ".join(f"{k} {round(v * 100 / total)}%" for k, v in sorted(by_cat.items(), key=lambda x: -x[1]))
+    by_title: dict = {}
+    for r in rows:
+        by_title[r["title"]] = by_title.get(r["title"], 0) + r.get("active", 0)
+    top = sorted(by_title.items(), key=lambda x: -x[1])[:3]
+    tops = " · ".join(f"{t} {m / 60:.1f}시간" for t, m in top)
+    return (f"회의 {meets}건(PLAUD) · 클로드 앱 기록 {app}건 · AI 작업 {total / 60:.1f}시간\n"
+            f"AI 작업 배분: {share}\n"
+            f"가장 오래 붙잡은 것: {tops}\n"
+            f"(메시지 간격 10분 이하만 합산한 실제 작업 시간. 슬랙·문서 읽기·대면 대화는 빠짐)")
 
 
 def read(day: date) -> str:
@@ -375,6 +456,7 @@ def main(argv: list[str]) -> int:
         print(text)
         return 0
     print(f"✅ 하루 기록 저장: {write(day, text)}")
+    save_data()
     return 0
 
 

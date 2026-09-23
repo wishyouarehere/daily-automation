@@ -150,6 +150,29 @@ def read_latest_weekly_text() -> str:
 
 # ── 이번 주 Daily (월~오늘) ───────────────────────────────────────
 def read_week_daily(monday) -> str:
+    """이번 주 WorkFlowy Daily + 하루 기록(GPT 워크·클로드·PLAUD, 2026-09-23~)."""
+    logs = read_week_daylogs(monday)
+    daily = _read_week_workflowy(monday)
+    return "\n\n".join(x for x in (logs, daily) if x)
+
+
+def read_week_daylogs(monday) -> str:
+    """하루 기록. 오늘(금요일) 기록은 00:15에야 생기므로 여기서 먼저 한 번 만든다(밤에 덮어씀)."""
+    try:
+        import day_log
+        today = datetime.now(KST).date()
+        if not DRY and not day_log.read(today):
+            day_log.write(today, day_log.build(today))
+            day_log.save_data()
+        days = (today - monday.date()).days + 1 if isinstance(monday, datetime) else (today - monday).days + 1
+        body = day_log.week_logs(monday.date() if isinstance(monday, datetime) else monday, days=days)
+        return f"### 하루 기록 (AI 작업·회의 실제 기록)\n{body}" if body else ""
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 하루 기록 읽기 실패: {e}", file=sys.stderr)
+        return ""
+
+
+def _read_week_workflowy(monday) -> str:
     if not DAILY_DIR.is_dir():
         return ""
     cutoff = monday.timestamp()
@@ -422,6 +445,17 @@ def sns_weekly_block(monday) -> str:
 
 
 # ── 메인 ──────────────────────────────────────────────────────────
+def time_mirror_block(monday) -> str:
+    """시간 거울 — 하루 기록의 실제 AI 작업 시간 배분(2026-09-23 Jay 결정: 회고 초안에만)."""
+    try:
+        import day_log
+        start = monday.date() if isinstance(monday, datetime) else monday
+        text = day_log.time_mirror(start, days=7)
+        return f"\n\n## 이번 주 시간 거울\n\n{text}\n" if text else ""
+    except Exception:
+        return ""
+
+
 def time_audit_block(monday) -> str:
     """staff-office time_audit(금 18:10, --to-state)가 남긴 이번 주 시간 배분 분석을 붙인다.
 
@@ -514,7 +548,7 @@ def main():
     fname = (f"Week{week_n}-주간회고-{monday.strftime('%m%d')}-"
              f"{now.strftime('%m%d')}-draft.md")
     out_path = WEEKLY_DIR / fname
-    final = body + "\n" + sns_weekly_block(monday) + time_audit_block(monday)
+    final = body + "\n" + sns_weekly_block(monday) + time_mirror_block(monday) + time_audit_block(monday)
 
     if DRY:
         print(f"\n===== [DRY] 저장 예정: {fname} (Slack: {slack_state} · Docs: {docs_state}) =====\n")
