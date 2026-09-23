@@ -457,6 +457,16 @@ def main(argv: list[str]) -> int:
         return 0
     print(f"✅ 하루 기록 저장: {write(day, text)}")
     save_data()
+    if argv and argv[0] == "--yesterday":
+        # 한도(DAILY_LIMIT) 등으로 요약 없이 저장된 날이 있으면 하루 한 개씩 다시 채운다
+        for back in (1, 2):
+            d = day - timedelta(days=back)
+            old = read(d)
+            if old and "## 요약" not in old:
+                _LAST_DATA.clear()
+                print(f"↻ 요약 없는 {d} 다시 생성: {write(d, build(d))}")
+                save_data()
+                break
     return 0
 
 
