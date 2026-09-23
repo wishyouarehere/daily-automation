@@ -186,6 +186,40 @@ def render_html() -> str:
             .replace("{{STAMP}}", stamp))
 
 
+# ── 아티팩트 동기화 표식 ──────────────────────────────────────────
+# 헤드리스 claude -p는 Artifact 도구를 못 쓴다(2026-09-23 실측). 아티팩트 갱신은 Jay가 클로드 세션에서
+# 「다시 여기 갱신」을 요청할 때 한다. sync-check는 게시본과 볼트가 다른지만 알려준다.
+ARTIFACT_URL = "https://claude.ai/code/artifact/53c035c9-2e70-4721-b376-b65dea73f0a3"
+PUBLISHED = Path.home() / ".local/state/jay-desk/again_published.json"
+
+
+def _fingerprint() -> str:
+    import hashlib
+    body = json.dumps(load(), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def sync_check() -> str:
+    """게시본과 볼트가 다르면 세션에 줄 안내문, 같으면 ""."""
+    try:
+        cur = _fingerprint()
+    except Exception:
+        return ""
+    try:
+        last = json.loads(PUBLISHED.read_text()).get("fp", "")
+    except Exception:
+        last = ""
+    if cur == last:
+        return ""
+    return (f"다시-여기: 볼트({summary()})가 아티팩트 게시본과 다름. "
+            f"갱신 방법 = again_bank.py html → 아티팩트 {ARTIFACT_URL} 재게시 → again_bank.py mark-published")
+
+
+def mark_published() -> None:
+    PUBLISHED.parent.mkdir(parents=True, exist_ok=True)
+    PUBLISHED.write_text(json.dumps({"fp": _fingerprint(), "at": date.today().isoformat()}))
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] == "list":
         for s in load():
@@ -207,6 +241,15 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "html":
         sys.stdout.write(render_html())
+        return 0
+    if cmd == "sync-check":
+        msg = sync_check()
+        if msg:
+            print(msg)
+        return 0
+    if cmd == "mark-published":
+        mark_published()
+        print("게시 표식 갱신")
         return 0
     if cmd == "summary":
         print(summary())
