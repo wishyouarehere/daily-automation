@@ -243,6 +243,29 @@ def ai_sessions(since: datetime, until: datetime, limit: int = 12) -> list[str]:
     return out[:limit]
 
 
+# ── 종이책 밑줄 후보 (집맥 book_archive, SSH) ──────────────────────
+HOME_MAC = "jay@100.79.115.1"
+SNS_PY = "/Users/jay/.venvs/sns-tracker-unified/bin/python"
+
+
+def underline_candidates(exclude: set[str]) -> list[dict]:
+    """[{id, text, captured}] — 집맥 book_underlines.py 결과. 실패하면 []."""
+    ex = ",".join(sorted(exclude))[:20000]
+    cmd = f"{SNS_PY} ~/daily-automation/book_underlines.py '{ex}'"
+    try:
+        if os.getenv("USER") == "jay":
+            r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True, timeout=60)
+        else:
+            r = subprocess.run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", HOME_MAC, cmd],
+                               capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return json.loads(r.stdout or "[]")
+        print(f"[warn] 밑줄 후보 실패: {r.stderr[-300:]}", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 밑줄 후보 스킵: {e}", file=sys.stderr)
+    return []
+
+
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "sessions":
         s = datetime.fromisoformat(sys.argv[2])

@@ -22,6 +22,10 @@ def _today() -> date:
     return date.fromisoformat(forced) if forced else J.now().date()
 
 
+def underlines_for_prompt(rows: list[dict]) -> str:
+    return "\n".join(f"[{r['id']}] {r['text']}" for r in rows) or "없음"
+
+
 def _prompt(today: date, weekend: bool, cands: list[dict], material: dict) -> str:
     head = f"""너는 Jay(장홍석, 다니엘프로젝트 부대표·CPO)의 저녁 파트너다.
 오늘은 {today.isoformat()} ({J.WEEKDAY_KR[today.weekday()]}요일). 하루를 닫는 메시지 한 통의 재료를 만든다.
@@ -30,11 +34,18 @@ def _prompt(today: date, weekend: bool, cands: list[dict], material: dict) -> st
 {J.TONE}
 
 출력은 JSON 객체 하나만. 설명·코드펜스 금지:
-{{"facts": ["...", "..."], "question": "...", "quote_id": "..."}}
+{{"facts": ["...", "..."], "question": "...", "quote_id": "...", "underline_id": "..." 또는 null, "underline_text": "..."}}
 
 question: 오늘을 돌아보는 질문 하나(~60자). 감정·해석·배움·감사에 닿는 질문. 할 일·내일 계획을 묻지 않는다.
   가능하면 오늘 있었던 구체적 장면에 연결한다. 예: "브랜딩 미팅에서 가장 마음이 움직인 순간은 언제였어요?"
 quote_id: [문장 후보] 중 오늘 하루를 닫기에 맞는 문장 id 하나.
+underline_id: [책 밑줄 후보] 중 「다시, 여기」(마음·태도·감사·내면을 다잡는 문장 모음)에 둘 만한 것 하나의 id.
+  업무 요령·정보·통계·줄거리 문장은 고르지 않는다. 마땅한 게 없으면 null.
+underline_text: 고른 밑줄 원문에서 OCR 띄어쓰기·줄바꿈 오류만 고친 문장. 글자는 하나도 바꾸거나 빼지 않는다.
+  밑줄이 문장 중간에서 잘려 있으면 원문 그대로 둔다.
+
+[책 밑줄 후보]
+{underlines_for_prompt(material.get('underlines') or [])}
 """
     if weekend:
         return head + f"""facts: 주말이라 반드시 빈 배열 [].
@@ -65,10 +76,10 @@ quote_id: [문장 후보] 중 오늘 하루를 닫기에 맞는 문장 id 하나
 
 def build(today: date) -> tuple[str, dict]:
     weekend = J.is_weekend(today)
-    material = {}
+    material = {"underlines": S.underline_candidates(J.offered_underlines())}
     if not weekend:
         start = datetime(today.year, today.month, today.day, tzinfo=J.KST)
-        material = {
+        material |= {
             "calendar": "\n".join(J.calendar_lines(today)),
             "meetings": S.meetings(days=1),
             "daily": S.workflowy_daily(today),
@@ -88,8 +99,29 @@ def build(today: date) -> tuple[str, dict]:
     if quote:
         parts.append(J.render_quote(quote))
         J.mark_used(quote, "evening")
-    meta = {"weekend": weekend, "facts": len(facts), "llm_ok": bool(data)}
+    meta = {"weekend": weekend, "facts": len(facts), "llm_ok": bool(data),
+            "quote": quote, "candidate": _pick_underline(material.get("underlines") or [], data)}
     return "\n\n".join(parts), meta
+
+
+def _pick_underline(rows: list[dict], data: dict) -> dict | None:
+    """모델이 고른 밑줄. 띄어쓰기 교정본이 원문과 글자가 다르면 원문을 쓴다."""
+    uid = data.get("underline_id")
+    row = next((r for r in rows if r["id"] == uid), None) if uid else None
+    if not row:
+        return None
+    fixed = str(data.get("underline_text") or "").strip()
+    text = fixed if fixed and J.same_letters(fixed, row["text"]) else row["text"]
+    return {"id": row["id"], "text": text, "captured": row.get("captured", "")}
+
+
+def candidate_message(c: dict) -> str:
+    when = ""
+    if c.get("captured"):
+        y, m, d = c["captured"].split("-")
+        when = f" ({int(m)}/{int(d)}에 찍은 페이지)"
+    return (f"📚 <b>책 밑줄에서</b>{when}\n<i>{J.clean(c['text'])}</i>\n\n"
+            "「다시, 여기」에 둘까요? ❤️ 누르면 넣어요.")
 
 
 def main() -> int:
@@ -101,7 +133,15 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"ERROR 저녁 메시지 조립 실패: {e}", file=sys.stderr)
         return 1
-    J.send_telegram(msg)
+    q, cand = meta.pop("quote"), meta.pop("candidate")
+    mid = J.send_telegram(msg)
+    if q:
+        J.record_message(mid, "quote", q["text"], q["section"])
+    if cand:
+        cmid = J.send_telegram(candidate_message(cand))
+        J.record_message(cmid, "candidate", cand["text"], "책에서", ref=cand["id"])
+        J.mark_offered(cand["id"])
+    meta["candidate"] = bool(cand)
     J.emit_ledger("jay_desk.evening.sent", "저녁 한 통 발송", meta)
     print(f"✅ 저녁 한 통 발송 {meta}")
     return 0

@@ -45,16 +45,67 @@ def date_label(d: date) -> str:
 
 
 # ── 텔레그램 (치프봇 직접 발송 — 개인 메시지라 운영 게이트를 거치지 않는다) ──
-def send_telegram(text: str) -> None:
+def send_telegram(text: str) -> int | None:
+    """발송하고 message_id를 돌려준다(드라이런이면 None)."""
     if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
         print(text)
-        return
+        return None
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat = os.environ["TELEGRAM_CHAT_ID"]
     r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
                       json={"chat_id": chat, "text": text, "parse_mode": "HTML",
                             "disable_web_page_preview": True}, timeout=20)
     r.raise_for_status()
+    return (r.json().get("result") or {}).get("message_id")
+
+
+# ── 메시지 ↔ 문장 기록 (치프봇이 👎·❤️·답장을 문장에 연결) ─────────────
+# 치프봇은 집맥에서 돈다. 반응 업데이트엔 메시지 본문이 없으므로 message_id→문장을
+# 집맥 ~/.local/state/jay-desk/messages.jsonl에 남긴다(회사맥이면 SSH로 추가).
+MESSAGES = STATE / "messages.jsonl"
+HOME_MAC = "jay@100.79.115.1"
+
+
+def record_message(mid: int | None, kind: str, text: str, section: str = "", ref: str = "") -> None:
+    if not mid:
+        return
+    line = json.dumps({"mid": mid, "kind": kind, "text": text, "section": section,
+                       "ref": ref, "date": now().date().isoformat()}, ensure_ascii=False)
+    if os.getenv("USER") == "jay":
+        STATE.mkdir(parents=True, exist_ok=True)
+        with open(MESSAGES, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        return
+    import subprocess
+    try:
+        subprocess.run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", HOME_MAC,
+                        "mkdir -p ~/.local/state/jay-desk && cat >> ~/.local/state/jay-desk/messages.jsonl"],
+                       input=line + "\n", text=True, timeout=20, check=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 메시지 기록 실패(반응 연결 불가, 답장은 동작): {e}", file=sys.stderr)
+
+
+OFFERED = STATE / "underlines_offered.json"
+
+
+def offered_underlines() -> set[str]:
+    try:
+        return set(json.loads(OFFERED.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def mark_offered(uid: str) -> None:
+    if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
+        return
+    STATE.mkdir(parents=True, exist_ok=True)
+    ids = sorted(offered_underlines() | {uid})
+    OFFERED.write_text(json.dumps(ids[-2000:], ensure_ascii=False), encoding="utf-8")
+
+
+def same_letters(a: str, b: str) -> bool:
+    """공백·줄바꿈만 다르고 글자는 같은가(OCR 띄어쓰기 교정 검증)."""
+    return re.sub(r"\s+", "", a or "") == re.sub(r"\s+", "", b or "")
 
 
 def emit_ledger(event_type: str, title: str, meta: dict) -> None:

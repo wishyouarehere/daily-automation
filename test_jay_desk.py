@@ -49,7 +49,7 @@ class _Env:
                       jay_desk.calendar_lines, jay_desk.ask_json, jay_desk.condition_line,
                       desk_sources.ai_sessions, desk_sources.meetings,
                       desk_sources.night_chief_candidates, desk_sources.decision_reviews,
-                      desk_sources.workflowy_daily)
+                      desk_sources.workflowy_daily, desk_sources.underline_candidates)
         again_bank.BANK = bank
         jay_desk.STATE = self.dir
         jay_desk.USED = self.dir / "used.json"
@@ -60,6 +60,8 @@ class _Env:
         desk_sources.night_chief_candidates = lambda d: ""
         desk_sources.decision_reviews = lambda d: []
         desk_sources.workflowy_daily = lambda d: ""
+        desk_sources.underline_candidates = lambda ex: [
+            {"id": "U1", "text": "나는 오늘 을 산다.", "captured": "2026-09-18"}]
         self.answer = {}
         jay_desk.ask_json = lambda prompt, job: self.answer
         return self
@@ -69,7 +71,7 @@ class _Env:
          jay_desk.calendar_lines, jay_desk.ask_json, jay_desk.condition_line,
          desk_sources.ai_sessions, desk_sources.meetings,
          desk_sources.night_chief_candidates, desk_sources.decision_reviews,
-         desk_sources.workflowy_daily) = self.saved
+         desk_sources.workflowy_daily, desk_sources.underline_candidates) = self.saved
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
@@ -134,6 +136,22 @@ def test_quote_not_reused_within_two_weeks_or_same_day():
         finally:
             os.environ["DRY_RUN"] = "1"
             jay_desk.mark_used = orig
+
+
+def test_underline_candidate_keeps_letters():
+    with _Env() as env:
+        env.answer = {"quote_id": "스토아#1", "question": "q",
+                      "underline_id": "U1", "underline_text": "나는 오늘을 산다."}
+        _, meta = daily_review.build(date(2026, 9, 23))
+        assert meta["candidate"]["text"] == "나는 오늘을 산다."   # 띄어쓰기만 고침
+        env.answer["underline_text"] = "나는 내일을 산다."          # 글자 바뀜 → 원문 유지
+        _, meta = daily_review.build(date(2026, 9, 24))
+        assert meta["candidate"]["text"] == "나는 오늘 을 산다."
+        env.answer["underline_id"] = None
+        _, meta = daily_review.build(date(2026, 9, 25))
+        assert meta["candidate"] is None
+        msg = daily_review.candidate_message({"id": "U1", "text": "a<b", "captured": "2026-09-18"})
+        assert "9/18에 찍은 페이지" in msg and "a&lt;b" in msg and "❤️" in msg
 
 
 def test_html_escaping_of_model_output():

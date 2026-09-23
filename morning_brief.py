@@ -121,7 +121,7 @@ def build(today: date) -> tuple[str, dict]:
         parts.append(f"<b>오늘의 질문</b>\n{question}")
 
     meta = {"weekend": weekend, "focus": bool(focus), "llm_ok": bool(data),
-            "quote": quote["text"] if quote else ""}
+            "quote": quote["text"] if quote else "", "section": quote["section"] if quote else ""}
     if quote:
         J.mark_used(quote, "morning")
     return "\n\n".join(parts), meta
@@ -134,7 +134,9 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"ERROR 아침 메시지 조립 실패: {e}", file=sys.stderr)
         return 1
-    J.send_telegram(msg)
+    mid = J.send_telegram(msg)
+    if meta.get("quote"):
+        J.record_message(mid, "quote", meta["quote"], meta.get("section", ""))
     J.emit_ledger("jay_desk.morning.sent", "아침 한 통 발송", meta)
     print(f"✅ 아침 한 통 발송 {meta}")
     return 0
