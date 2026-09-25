@@ -128,6 +128,10 @@ def build(today: date) -> tuple[str, dict]:
             parts.append(body)
     if question:
         parts.append(f"<b>오늘의 질문</b>\n{question}")
+    otd = S.career_on_this_day()
+    if otd:
+        head, _, rest = otd.partition("\n")
+        parts.append(f"<b>{J.clean(head)}</b>\n{J.clean(rest)}")
 
     meta = {"weekend": weekend, "focus": bool(focus), "llm_ok": bool(data),
             "quote": quote["text"] if quote else "", "section": quote["section"] if quote else ""}

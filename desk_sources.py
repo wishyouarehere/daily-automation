@@ -275,3 +275,21 @@ if __name__ == "__main__":
         print(json.dumps(local_sessions(s, u), ensure_ascii=False))
     else:
         print(__doc__)
+
+
+def career_on_this_day() -> str:
+    """커리어 아카이브 N년 전 오늘 한 덩어리(집맥 색인에서 공개 가능 자료만). 스위치 파일이 있을 때만.
+
+    켜기: touch ~/.config/career-otd.on  /  끄기: rm ~/.config/career-otd.on
+    실패·타임아웃이면 빈 문자열(아침 한 통은 그대로 나간다).
+    """
+    import subprocess
+    if not (Path.home() / ".config" / "career-otd.on").exists():
+        return ""
+    try:
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "jay@100.79.115.1",
+                            "~/career-archive/.venv/bin/python ~/career-archive/code/on_this_day.py"],
+                           capture_output=True, text=True, timeout=25)
+        return nfc(r.stdout.strip()) if r.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
