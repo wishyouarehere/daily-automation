@@ -121,7 +121,11 @@ def candidate_message(c: dict) -> str:
     when = ""
     if c.get("captured"):
         y, m, d = c["captured"].split("-")
-        when = f" ({int(m)}/{int(d)}에 찍은 페이지)"
+        # 옛 사진이 대부분이라 올해가 아니면 연도를 붙인다(2024-02-29가 2/29로만 나가던 문제).
+        if int(y) == date.today().year:
+            when = f" ({int(m)}/{int(d)}에 찍은 페이지)"
+        else:
+            when = f" ({y}년 {int(m)}월 {int(d)}일에 찍은 페이지)"
     return (f"📚 <b>책 밑줄에서</b>{when}\n<i>{J.clean(c['text'])}</i>\n\n"
             "「다시, 여기」에 둘까요? ❤️ 누르면 넣어요.")
 
