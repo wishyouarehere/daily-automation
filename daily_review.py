@@ -55,6 +55,10 @@ underline_text: 고른 밑줄 원문 안에서 완결된 문장 1~2개만 연속
 """
     return head + f"""facts: 오늘 실제로 있었던 일 2~4줄(각 ~45자). 회의록의 결론·결정, 오늘 한 작업.
   - 재료에 결론이 적힌 것만. 일정 제목만 있고 내용이 없으면 "OO 미팅" 정도로만 쓴다.
+  - 어느 자리였는지 앞에 붙인다. 예: "타운홀: 4분기 매출 목표 24억 6천 발표", "영동님 미팅: 미디어팀 전용 메뉴 따로 두기로".
+  - 회의록 표현을 옮겨 적지 말고 Jay가 동료에게 말하듯 쉬운 말로 쓴다. 공표·메뉴로 분리 같은 문서 말투 금지.
+  - 논의·우려·제안을 결정으로 올려 쓰지 않는다. 회의록에 확정 결정으로 적힌 것만 결정이다.
+  - 제품명 데이원은 반드시 데이원으로 쓴다. 회의록의 Day1·대시온은 데이원의 받아쓰기 오류다.
   - 평가어("잘했다", "아쉽다") 금지. 재료가 빈약하면 1줄이어도 된다.
 
 [문장 후보]
@@ -88,7 +92,8 @@ def build(today: date) -> tuple[str, dict]:
     cands = J.quote_candidates(exclude_texts=J.used_today())
     data = J.ask_json(_prompt(today, weekend, cands, material), job="jay_desk_evening")
     quote = J.pick_quote(cands, data.get("quote_id"))
-    facts = [J.clean(f) for f in (data.get("facts") or []) if str(f).strip()][:4]
+    facts = [J.clean(S.normalize_terms(f)) for f in (data.get("facts") or []) if str(f).strip()][:4]
+    data["question"] = S.normalize_terms(data.get("question") or "")
     question = J.clean(data.get("question"))
 
     parts = [f"🌙 <b>{J.date_label(today)} · 하루를 닫으며</b>"]

@@ -70,6 +70,19 @@ def meetings(days: int, total_cap: int = 12000) -> str:
         return ""
 
 
+def normalize_terms(text) -> str:
+    """Day1·대시온 → 데이원. 정본은 wf-sync meeting_ctx(회의록 읽는 곳 공용)."""
+    try:
+        wf = str(HOME / "wf-sync")
+        if wf not in sys.path:
+            sys.path.insert(0, wf)
+        import meeting_ctx
+        return meeting_ctx.normalize_terms(str(text or ""))
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 표기 정규화 실패: {e}", file=sys.stderr)
+        return str(text or "")
+
+
 # ── 야간참모 결정 후보 ─────────────────────────────────────────────
 def night_chief_candidates(today) -> str:
     """staff-office night_chief가 05:55에 남긴 오늘 결정 후보 원문(추천·반론·근거 포함)."""
