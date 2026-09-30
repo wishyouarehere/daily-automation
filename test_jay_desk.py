@@ -213,8 +213,13 @@ def test_day_log_app_inbox_and_export():
         {"sender": "human", "created_at": "2026-09-30T14:59:00Z", "content": [{"type": "text", "text": "자정 직전"}]},
         {"sender": "human", "created_at": "2026-09-30T15:01:00Z", "content": [{"type": "text", "text": "자정 직후"}]},
         {"sender": "human", "created_at": "2026-09-01T01:00:00Z", "content": [{"type": "text", "text": "옛날"}]}]}]
-    days = claude_export.split_by_day(conv)
+    days = claude_export.sessions_by_day(conv, date(2026, 9, 22))
     assert sorted(days) == ["2026-09-30", "2026-10-01"]  # KST 자정 경계로 나뉘고 시작일 전은 버림
+    # 수신함에 있는 맥 대화(시각이 겹침)는 빼고 폰 대화만 보탠다
+    inbox_row = {"start": "09:00", "end": "09:00"}
+    mac = {"start": "08:55", "end": "09:20"}
+    phone = {"start": "21:00", "end": "21:05"}
+    assert day_log.merge_app([inbox_row], [mac, phone]) == [inbox_row, phone]
 
 
 if __name__ == "__main__":

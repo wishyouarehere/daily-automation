@@ -7,7 +7,7 @@
   - GPT 워크 = ~/.codex/sessions (originator codex_work_desktop 등 사람 세션만)
   - 클로드 CLI = ~/.claude/projects/*/*.jsonl (자동화 -p 세션 제외)
   - 클로드 앱 = 맥 데스크톱 앱이 obsidian-write `log_day`로 남긴 볼트 클로드앱-수신함.md 줄(실시간)
-    + 폰까지 전부는 claude.ai 데이터 내보내기 zip 배치(claude_export.py, 있으면 그날은 이쪽 우선)
+    + 폰 대화는 claude.ai 데이터 내보내기 zip 배치(claude_export.py)로 수신함에 없는 것만 보탬
   - PLAUD = 볼트 회의록/
 세션별로 시각·제목·요청·결과 한두 줄만 남긴다. 원문은 원래 폴더에 있고 경로만 적는다.
 결과 요약은 하루 한 번 구독 claude -p(sonnet). 토큰·키 모양 문자열은 지운다.
@@ -40,6 +40,7 @@ PEER = {"dp-tech-jhs": "jay@100.79.115.1", "jay": "dp-tech-jhs@100.75.205.84"}.g
 PEER_DIR = {"dp-tech-jhs": "~/daily-automation", "jay": "~/Documents/daily-automation"}.get(os.getenv("USER", ""))
 HUMAN_CODEX = {"codex_work_desktop", "Codex Desktop", "codex-tui"}
 WEEKDAY_KR = "월화수목금토일"
+LOG_START = date(2026, 9, 22)  # 하루 기록이 시작된 날
 
 _SECRET = re.compile(
     r"(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}"
@@ -250,34 +251,30 @@ def app_lines(day: date) -> list[dict]:
     return list(out.values())
 
 
-def app_sessions(day: date) -> list[dict] | None:
-    """claude.ai 내보내기 zip에서 푼 그날 대화(claude_export.py 캐시). 캐시가 없으면 None."""
+def app_sessions(day: date) -> list[dict]:
+    """폰 등 수신함에 없는 대화를 보태기 위한 내보내기 요약 캐시(claude_export.py). 없으면 []."""
     try:
         data = json.loads((DATA_DIR / f"app-{day.isoformat()}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    if not data.get("ok"):
-        return None
-    out = []
-    for c in data.get("conversations") or []:
-        reqs, last, times = [], "", []
-        for m in c.get("messages") or []:
-            t = _kst(str(m.get("created_at") or ""))
-            txt = (m.get("text") or "").strip()
-            if not t or t.date() != day or not txt:
-                continue
-            times.append(t)
-            if m.get("sender") == "human":
-                reqs.append(txt)
-            else:
-                last = txt
-        if reqs:
-            out.append({"src": "claude_app", "mac": "앱", "title": nfc(c.get("name") or "") or _clip(reqs[0], 40),
-                        "start": min(times).strftime("%H:%M"), "end": max(times).strftime("%H:%M"),
-                        "active": active_minutes(times),
-                        "requests": [scrub(_clip(nfc(x), 400)) for x in reqs[:12]],
-                        "last": scrub(_clip(nfc(last), 900)), "path": f"https://claude.ai/chat/{c['uuid']}"})
-    return out
+        return []
+    return data.get("sessions") or []
+
+
+def _hm(s: str) -> int:
+    try:
+        h, m = s.split(":")
+        return int(h) * 60 + int(m)
+    except ValueError:
+        return -1
+
+
+def merge_app(inbox: list[dict], export: list[dict]) -> list[dict]:
+    """수신함 줄(맥 앱이 정리한 한 줄)이 정본. 내보내기 대화 중 수신함 시각이 그 대화 시간대에
+    걸치는 것은 이미 기록된 맥 대화로 보고 빼고, 나머지(주로 폰)만 보탠다."""
+    marks = [_hm(r["start"]) for r in inbox if _hm(r["start"]) >= 0]
+    extra = [s for s in export
+             if not any(_hm(s["start"]) - 2 <= t <= _hm(s["end"]) + 10 for t in marks)]
+    return inbox + extra
 
 
 # ── 요약 (하루 한 번 구독 -p) ──────────────────────────────────────
@@ -396,9 +393,8 @@ DATA_DIR = HOME / ".local/state/jay-desk/daylog"
 
 
 def build(day: date) -> str:
-    # 클로드 앱: 내보내기 캐시(폰+맥 전체)가 있으면 그걸, 없으면 맥 앱 수신함 줄
-    app_rows = app_sessions(day)
-    sessions = sorted(collect_all(day) + (app_rows if app_rows is not None else app_lines(day)),
+    # 클로드 앱: 맥 앱 수신함 줄이 정본, 내보내기(폰)는 거기 없는 대화만 보탠다
+    sessions = sorted(collect_all(day) + merge_app(app_lines(day), app_sessions(day)),
                       key=lambda r: r["start"])
     meets = meetings(day)
     app: list[str] = []
