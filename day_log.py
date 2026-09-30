@@ -227,16 +227,18 @@ def app_lines(day: date) -> list[dict]:
         text = nfc(APP_INBOX.read_text(encoding="utf-8"))
     except OSError:
         return []
-    out = []
+    out: dict = {}  # 같은 대화에서 결론이 바뀌어 다시 남기면 주제가 같다 — 마지막 줄만(첫 시각 유지)
     for line in text.splitlines():
         m = re.match(rf"- {day.isoformat()}\s+(\d{{2}}:\d{{2}}|--:--)?\s*\|\s*([^|]+?)\s*(?:\|\s*(.+))?$", line.strip())
         if not m:
             continue
         hm = m.group(1) if m.group(1) and m.group(1) != "--:--" else "--:--"
-        out.append({"src": "claude_app", "mac": "앱", "title": scrub(m.group(2)), "start": hm, "end": hm,
-                    "active": 0, "requests": [scrub(m.group(2))], "last": scrub(m.group(3) or ""),
-                    "path": str(APP_INBOX.relative_to(VAULT))})
-    return out
+        topic = scrub(m.group(2))
+        first = out.get(topic, {}).get("start", hm)
+        out[topic] = {"src": "claude_app", "mac": "앱", "title": topic, "start": first, "end": hm,
+                      "active": 0, "requests": [topic], "last": scrub(m.group(3) or ""),
+                      "path": str(APP_INBOX.relative_to(VAULT))}
+    return list(out.values())
 
 
 def app_sessions(day: date) -> list[dict] | None:
@@ -350,7 +352,8 @@ def render(day: date, sessions: list[dict], meets: list[dict], app: list[str], s
             out += [f"### {c}", ""]
             for i, s in rows:
                 title = scrub(titles.get(f"S{i}") or s["title"])
-                res = sm.get(f"S{i}") or _clip(s["requests"][0], 80)
+                res = sm.get(f"S{i}") or (s["last"] if s["src"] == "claude_app" and s["last"] else "") \
+                    or _clip(s["requests"][0], 80)
                 tag = _SRC_TAG.get(s["src"], s["src"]) + ("" if s["src"] == "claude_app" else f"·{s['mac']}맥")
                 mins = f" {s['active']}분" if s.get("active") else ""
                 out.append(f"- {s['start']} **{title}** — {scrub(res)} `{tag}{mins}`")

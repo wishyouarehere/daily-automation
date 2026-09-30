@@ -191,6 +191,32 @@ def test_html_escaping_of_model_output():
     assert jay_desk.clean("**<script>** #채널") == "&lt;script&gt; #채널"
 
 
+def test_day_log_app_inbox_and_export():
+    import tempfile
+    from pathlib import Path
+    tmp_path = Path(tempfile.mkdtemp())
+    from datetime import date
+    import day_log, claude_export
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text("- 2026-10-01 09:00 | 중고차 | 첫 결론\n- 2026-10-01 09:30 | 중고차 | 바뀐 결론\n"
+                     "- 2026-10-01 --:-- | 옛 형식 | x\n- 2026-10-02 10:00 | 다른날 | y\n", encoding="utf-8")
+    old = (day_log.APP_INBOX, day_log.VAULT)
+    day_log.APP_INBOX, day_log.VAULT = inbox, tmp_path
+    try:
+        rows = day_log.app_lines(date(2026, 10, 1))
+    finally:
+        day_log.APP_INBOX, day_log.VAULT = old
+    car = [r for r in rows if r["title"] == "중고차"]
+    assert len(rows) == 2 and len(car) == 1
+    assert car[0]["start"] == "09:00" and car[0]["last"] == "바뀐 결론"
+    conv = [{"uuid": "u", "name": "폰", "chat_messages": [
+        {"sender": "human", "created_at": "2026-09-30T14:59:00Z", "content": [{"type": "text", "text": "자정 직전"}]},
+        {"sender": "human", "created_at": "2026-09-30T15:01:00Z", "content": [{"type": "text", "text": "자정 직후"}]},
+        {"sender": "human", "created_at": "2026-09-01T01:00:00Z", "content": [{"type": "text", "text": "옛날"}]}]}]
+    days = claude_export.split_by_day(conv)
+    assert sorted(days) == ["2026-09-30", "2026-10-01"]  # KST 자정 경계로 나뉘고 시작일 전은 버림
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:
