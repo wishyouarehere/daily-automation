@@ -6,8 +6,8 @@
 재료(두 맥):
   - GPT 워크 = ~/.codex/sessions (originator codex_work_desktop 등 사람 세션만)
   - 클로드 CLI = ~/.claude/projects/*/*.jsonl (자동화 -p 세션 제외)
-  - 클로드 앱 = claude_app.py가 수집 전용 프로필로 claude.ai 대화를 직접 읽음(폰·맥 공통, 2026-09-30~)
-    실패한 날만 옛 구글 드라이브 `[하루기록]` 문서를 보조로 읽음 + 볼트 클로드앱-수신함.md
+  - 클로드 앱 = 맥 데스크톱 앱이 obsidian-write `log_day`로 남긴 볼트 클로드앱-수신함.md 줄(실시간)
+    + 폰까지 전부는 claude.ai 데이터 내보내기 zip 배치(claude_export.py, 있으면 그날은 이쪽 우선)
   - PLAUD = 볼트 회의록/
 세션별로 시각·제목·요청·결과 한두 줄만 남긴다. 원문은 원래 폴더에 있고 경로만 적는다.
 결과 요약은 하루 한 번 구독 claude -p(sonnet). 토큰·키 모양 문자열은 지운다.
@@ -220,68 +220,33 @@ def meetings(day: date) -> list[dict]:
     return sorted(out, key=lambda m: m["title"])
 
 
-def app_lines(day: date) -> list[str]:
-    """수신함에서 그날 줄. 형식: `- 2026-09-23 14:10 | 주제 | 결론`."""
+def app_lines(day: date) -> list[dict]:
+    """맥 데스크톱 앱이 obsidian-write `log_day`로 수신함에 남긴 그날 줄을 세션 형식으로.
+    형식: `- 2026-09-30 14:10 | 주제 | 결론` (시각은 도구가 서버에서 찍는다)."""
     try:
         text = nfc(APP_INBOX.read_text(encoding="utf-8"))
     except OSError:
         return []
-    key = day.isoformat()
-    return [l.strip() for l in text.splitlines() if l.strip().startswith(f"- {key}")]
-
-
-def drive_app_entries(day: date) -> list[str]:
-    """클로드 앱(폰·맥)이 구글 드라이브에 만든 `[하루기록] YYYY-MM-DD HH:MM | 주제` 문서들.
-
-    앱의 드라이브 커넥터는 새 파일 생성만 되고, 자체 OAuth(drive.file)로는 남이 만든 파일을
-    못 읽는다. 그래서 구독 claude(네이티브 바이너리)의 claude.ai 드라이브 커넥터로 읽는다.
-    도구는 검색·읽기 두 개만 허용. 실패하면 []."""
-    binary = next((b for b in ("/opt/homebrew/bin/claude", str(HOME / ".local/share/claude/claude"))
-                   if os.path.exists(b)), None)
-    if not binary:
-        return []
-    key = f"[하루기록] {day.isoformat()}"
-    prompt = (f"Google Drive 커넥터로 제목에 '{key}'가 들어간 파일을 모두 찾고(ToolSearch로 "
-              "Google_Drive search_files·read_file_content 도구를 먼저 불러온다) 각 파일 내용을 읽는다. "
-              "출력은 JSON 배열 하나만: [{\"title\": \"...\", \"content\": \"...\"}]. "
-              "없으면 []. 파일을 만들거나 고치지 않는다.")
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    try:
-        r = subprocess.run([binary, "-p", prompt, "--model", "haiku", "--output-format", "text",
-                            "--allowedTools", "ToolSearch,mcp__claude_ai_Google_Drive__search_files,"
-                            "mcp__claude_ai_Google_Drive__read_file_content"],
-                           capture_output=True, text=True, timeout=240, env=env, cwd="/tmp")
-        t = r.stdout.strip()
-        a = t.find("[")
-        rows = json.JSONDecoder().raw_decode(t[a:])[0] if a != -1 else []
-    except Exception as e:  # noqa: BLE001
-        print(f"[warn] 드라이브 수신함 읽기 실패: {e}", file=sys.stderr)
-        return []
     out = []
-    for row in rows:
-        title = nfc(str(row.get("title", ""))).replace("[하루기록]", "").strip()
-        body = " ".join(nfc(str(row.get("content", ""))).split())
-        if title.startswith(day.isoformat()):
-            out.append(scrub(f"- {title}" + (f" | {_clip(body, 300)}" if body and body not in title else "")))
-    return sorted(out)
+    for line in text.splitlines():
+        m = re.match(rf"- {day.isoformat()}\s+(\d{{2}}:\d{{2}}|--:--)?\s*\|\s*([^|]+?)\s*(?:\|\s*(.+))?$", line.strip())
+        if not m:
+            continue
+        hm = m.group(1) if m.group(1) and m.group(1) != "--:--" else "--:--"
+        out.append({"src": "claude_app", "mac": "앱", "title": scrub(m.group(2)), "start": hm, "end": hm,
+                    "active": 0, "requests": [scrub(m.group(2))], "last": scrub(m.group(3) or ""),
+                    "path": str(APP_INBOX.relative_to(VAULT))})
+    return out
 
 
-APP_PY = "/opt/homebrew/bin/python3"  # playwright가 깔린 파이썬(venv에는 없음)
-_APP_STATUS: dict = {}
-
-
-def app_sessions(day: date) -> list[dict]:
-    """claude.ai 대화를 세션 형식으로. claude_app.py --cache가 남긴 캐시만 읽는다(없으면 []).
-    🔴 2026-09-30 전용 창이 Cloudflare 사람 확인에 무한 반복으로 걸려 launchd 잡은 중지 상태."""
+def app_sessions(day: date) -> list[dict] | None:
+    """claude.ai 내보내기 zip에서 푼 그날 대화(claude_export.py 캐시). 캐시가 없으면 None."""
     try:
         data = json.loads((DATA_DIR / f"app-{day.isoformat()}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []  # 수집 잡이 없거나 안 돈 날 — 창을 직접 띄우지 않는다(cron·Cloudflare, 2026-09-30)
-    if not data or not data.get("ok"):
-        _APP_STATUS.update(ok=False, error=str((data or {}).get("error", "캐시 없음"))[:200])
-        print(f"[warn] 클로드 앱 수집 없음: {_APP_STATUS['error']}", file=sys.stderr)
-        return []
-    _APP_STATUS.update(ok=True)
+        return None
+    if not data.get("ok"):
+        return None
     out = []
     for c in data.get("conversations") or []:
         reqs, last, times = [], "", []
@@ -387,12 +352,11 @@ def render(day: date, sessions: list[dict], meets: list[dict], app: list[str], s
                 title = scrub(titles.get(f"S{i}") or s["title"])
                 res = sm.get(f"S{i}") or _clip(s["requests"][0], 80)
                 tag = _SRC_TAG.get(s["src"], s["src"]) + ("" if s["src"] == "claude_app" else f"·{s['mac']}맥")
-                out.append(f"- {s['start']} **{title}** — {scrub(res)} `{tag} {s.get('active', 0)}분`")
+                mins = f" {s['active']}분" if s.get("active") else ""
+                out.append(f"- {s['start']} **{title}** — {scrub(res)} `{tag}{mins}`")
             out.append("")
     if app:
         out += ["## 클로드 앱 메모", ""] + app + [""]
-    if _APP_STATUS.get("ok") is False:
-        out += ["<!-- app:missing -->", ""]
     if sessions:
         out += ["> [!note]- 원문 위치", ">"]
         out += [f"> - {s['start']} {scrub(titles.get(f'S{i}') or s['title'])}: "
@@ -420,15 +384,16 @@ DATA_DIR = HOME / ".local/state/jay-desk/daylog"
 
 
 def build(day: date) -> str:
-    _APP_STATUS.clear()
-    sessions = sorted(collect_all(day) + app_sessions(day), key=lambda r: r["start"])
+    # 클로드 앱: 내보내기 캐시(폰+맥 전체)가 있으면 그걸, 없으면 맥 앱 수신함 줄
+    app_rows = app_sessions(day)
+    sessions = sorted(collect_all(day) + (app_rows if app_rows is not None else app_lines(day)),
+                      key=lambda r: r["start"])
     meets = meetings(day)
-    # 구글 드라이브 [하루기록] 문서는 앱 직접 수집이 실패한 날만 보조로 읽는다(앱 지침 은퇴 전 과도기)
-    app = sorted(set(app_lines(day) + ([] if _APP_STATUS.get("ok") else drive_app_entries(day))))
+    app: list[str] = []
     summ = summarize(day, sessions, meets, app)
     cats = summ.get("categories") or {}
     _LAST_DATA.update({"date": day.isoformat(), "meetings": len(meets),
-                       "app": len(app) + sum(s["src"] == "claude_app" for s in sessions),
+                       "app": sum(s["src"] == "claude_app" for s in sessions),
                        "sessions": [{"title": s["title"], "src": s["src"], "active": s.get("active", 0),
                                      "category": cats.get(f"S{i}", "기타")}
                                     for i, s in enumerate(sessions, 1)]})
@@ -507,6 +472,12 @@ def main(argv: list[str]) -> int:
         return 0
     if argv and argv[0] == "--yesterday":
         day = datetime.now(KST).date() - timedelta(days=1)
+        try:  # 폰 대화 배치: 새 내보내기 zip을 먼저 풀어야 어제 기록에도 들어간다
+            import claude_export
+            pending = claude_export.ingest(log_exists=lambda d: bool(read(d)))
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 클로드 내보내기 처리 실패: {e}", file=sys.stderr)
+            pending = []
     else:
         day = date.fromisoformat(argv[0]) if argv else datetime.now(KST).date()
     text = build(day)
@@ -516,13 +487,18 @@ def main(argv: list[str]) -> int:
     print(f"✅ 하루 기록 저장: {write(day, text)}")
     save_data()
     if argv and argv[0] == "--yesterday":
+        import claude_export
+        claude_export.done(day)
+        for d in [x for x in pending if x != day][:claude_export.REBUILD_CAP]:
+            _LAST_DATA.clear()
+            print(f"↻ 클로드 내보내기 반영해 {d} 다시 생성: {write(d, build(d))}")
+            save_data()
+            claude_export.done(d)
         # 한도(DAILY_LIMIT) 등으로 요약 없이 저장된 날이 있으면 하루 한 개씩 다시 채운다
         for back in (1, 2):
             d = day - timedelta(days=back)
             old = read(d)
-            late_app = "<!-- app:missing -->" in old and (DATA_DIR / f"app-{d.isoformat()}.json").exists() \
-                and '"ok": true' in (DATA_DIR / f"app-{d.isoformat()}.json").read_text(encoding="utf-8")
-            if old and ("## 요약" not in old or late_app):
+            if old and "## 요약" not in old:
                 _LAST_DATA.clear()
                 print(f"↻ 요약 없는 {d} 다시 생성: {write(d, build(d))}")
                 save_data()
