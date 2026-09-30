@@ -223,10 +223,19 @@ def meetings(day: date) -> list[dict]:
 def app_lines(day: date) -> list[dict]:
     """맥 데스크톱 앱이 obsidian-write `log_day`로 수신함에 남긴 그날 줄을 세션 형식으로.
     형식: `- 2026-09-30 14:10 | 주제 | 결론` (시각은 도구가 서버에서 찍는다)."""
-    try:
-        text = nfc(APP_INBOX.read_text(encoding="utf-8"))
-    except OSError:
-        return []
+    text = ""
+    for attempt in range(2):
+        try:
+            text = nfc(APP_INBOX.read_text(encoding="utf-8"))
+            break
+        except FileNotFoundError:
+            return []
+        except OSError as e:  # iCloud dataless(EDEADLK 등) — 내려받고 한 번 더
+            print(f"[warn] 클로드앱 수신함 읽기 실패({e}) — iCloud 내려받기 후 재시도", file=sys.stderr)
+            if attempt == 0:
+                subprocess.run(["brctl", "download", str(APP_INBOX)], capture_output=True, timeout=30)
+                import time
+                time.sleep(10)
     out: dict = {}  # 같은 대화에서 결론이 바뀌어 다시 남기면 주제가 같다 — 마지막 줄만(첫 시각 유지)
     for line in text.splitlines():
         m = re.match(rf"- {day.isoformat()}\s+(\d{{2}}:\d{{2}}|--:--)?\s*\|\s*([^|]+?)\s*(?:\|\s*(.+))?$", line.strip())
