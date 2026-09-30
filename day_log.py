@@ -78,8 +78,8 @@ def active_minutes(times: list) -> int:
 def _claude_cli(day: date) -> list[dict]:
     out = []
     for f in glob.glob(str(HOME / ".claude/projects/*/*.jsonl")):
-        if "private-tmp" in f or "automation" in f:
-            continue
+        if "private-tmp" in f or "automation" in f or "bridge-worktrees" in f:
+            continue  # 자동화·자동복구 브리지 세션은 Jay의 하루가 아니다
         try:
             if datetime.fromtimestamp(os.path.getmtime(f), KST).date() < day:
                 continue
@@ -283,9 +283,10 @@ def summarize(day: date, sessions: list[dict], meets: list[dict], app: list[str]
 아래는 그날 Jay가 AI 도구와 한 세션(S)과 회의(M)의 요청·마지막 답·회의록이다.
 
 출력은 JSON 객체 하나만:
-{{"overview": ["...", "..."], "sessions": {{"S1": "...", ...}}, "categories": {{"S1": "회사", ...}}, "meetings": {{"M1": "...", ...}}}}
+{{"overview": ["...", "..."], "titles": {{"S1": "...", ...}}, "sessions": {{"S1": "...", ...}}, "categories": {{"S1": "회사", ...}}, "meetings": {{"M1": "...", ...}}}}
 
 overview: 그날 Jay가 실제로 한 일의 큰 줄기 2~4줄(각 ~60자). 무엇을 결정·완성·논의했는지.
+titles: 세션마다 무슨 일이었는지 한국어 명사구 제목(8~20자). 영어·명령문·"#" 머리말 금지.
 sessions: 세션마다 무엇을 했고 어떻게 끝났는지 한두 문장(~80자). 요청만 있고 결론이 없으면 "진행 중"이라고 쓴다.
 categories: 세션마다 하나 — "회사"(다니엘·데이원·조직·회사 대시보드 등 회사 일), "개인 툴"(개인 자동화·봇·SNS 트래커·자산 등 Jay 개인 도구 개발), "글쓰기·건강"(글쓰기·콘텐츠·건강·개인 생활), "기타".
 meetings: 회의마다 결론·결정 한두 문장(~80자). 결론이 없으면 "논의만"이라고 쓴다.
@@ -310,41 +311,53 @@ meetings: 회의마다 결론·결정 한두 문장(~80자). 결론이 없으면
 
 
 # ── 렌더·저장 ──────────────────────────────────────────────────────
-_SRC_TITLE = {"codex": "GPT 워크 (코덱스)", "claude_cli": "클로드 CLI"}
+_SRC_TAG = {"codex": "GPT", "claude_cli": "CLI", "claude_app": "앱"}
+_CATS = ("회사", "개인 툴", "글쓰기·건강", "기타")
+_MEET_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}\s*")
 
 
 def render(day: date, sessions: list[dict], meets: list[dict], app: list[str], summ: dict) -> str:
+    """보는 순서: 요약 → 회의 → AI 작업(분류별 한 줄) → 접힌 원문 경로.
+    GPT·CLI·앱 세션은 출처 구분 없이 한 타임라인으로 합치고 출처는 꼬리표로만 붙인다."""
     sm, mm = summ.get("sessions") or {}, summ.get("meetings") or {}
+    titles, cats = summ.get("titles") or {}, summ.get("categories") or {}
     out = ["---", f"date: {day.isoformat()}", "type: 하루기록",
            f"generated: {datetime.now(KST):%Y-%m-%d %H:%M}", "---", "",
            f"# {day.month}/{day.day} {WEEKDAY_KR[day.weekday()]} 하루 기록", ""]
     if summ.get("overview"):
         out += ["## 요약", ""] + [f"- {scrub(str(x))}" for x in summ["overview"]] + [""]
-    out += ["## 회의 (PLAUD)", ""]
     if meets:
+        out += [f"## 회의 {len(meets)}건", ""]
         for i, m in enumerate(meets, 1):
+            name = _MEET_DATE.sub("", m["title"]).split(" — ")[0]
             res = mm.get(f"M{i}", "")
-            out.append(f"- **{m['title']}**" + (f" — {scrub(res)}" if res else "") + f" · [[{m['path'][:-3]}|회의록]]")
-    else:
-        out.append("- 없음")
-    out.append("")
-    for src in ("codex", "claude_cli"):
-        rows = [(i, s) for i, s in enumerate(sessions, 1) if s["src"] == src]
-        out += [f"## {_SRC_TITLE[src]}", ""]
-        if not rows:
-            out += ["- 없음", ""]
-            continue
-        for i, s in rows:
-            res = sm.get(f"S{i}", "")
-            cat = (summ.get("categories") or {}).get(f"S{i}", "")
-            out.append(f"- {s['start']}–{s['end']} **{s['title']}** ({s['mac']}맥 · 활동 {s.get('active', 0)}분"
-                       + (f" · {cat}" if cat else "") + ")")
-            out.append(f"  - 요청: {_clip(s['requests'][0], 160)}")
-            if res:
-                out.append(f"  - 결과: {scrub(res)}")
-            out.append(f"  - 원문: `{s['path']}`")
+            out.append(f"- [[{m['path'][:-3]}|{name}]]" + (f" — {scrub(res)}" if res else ""))
         out.append("")
-    out += ["## 클로드 앱", ""] + (app or ["- 없음 (앱 지침으로 남긴 기록이 없음)"]) + [""]
+    if sessions:
+        total = sum(s.get("active", 0) for s in sessions)
+        out += [f"## AI 작업 {len(sessions)}건 · {total / 60:.1f}시간", ""]
+        groups: dict = {}
+        for i, s in enumerate(sessions, 1):
+            c = cats.get(f"S{i}", "기타")
+            groups.setdefault(c if c in _CATS else "기타", []).append((i, s))
+        for c in _CATS:
+            rows = groups.get(c)
+            if not rows:
+                continue
+            out += [f"### {c}", ""]
+            for i, s in rows:
+                title = scrub(titles.get(f"S{i}") or s["title"])
+                res = sm.get(f"S{i}") or _clip(s["requests"][0], 80)
+                tag = _SRC_TAG.get(s["src"], s["src"]) + ("" if s["src"] == "claude_app" else f"·{s['mac']}맥")
+                out.append(f"- {s['start']} **{title}** — {scrub(res)} `{tag} {s.get('active', 0)}분`")
+            out.append("")
+    if app:
+        out += ["## 클로드 앱 메모", ""] + app + [""]
+    if sessions:
+        out += ["> [!note]- 원문 위치", ">"]
+        out += [f"> - {s['start']} {scrub(titles.get(f'S{i}') or s['title'])}: `{s['path']}`"
+                for i, s in enumerate(sessions, 1)]
+        out.append("")
     return "\n".join(out)
 
 
@@ -398,7 +411,8 @@ def week_logs(start: date, days: int = 7, cap: int = 30000) -> str:
         if not body:
             continue
         body = re.sub(r"^---\n.*?\n---\n", "", body, flags=re.S)
-        body = "\n".join(l for l in body.splitlines() if not l.strip().startswith("- 원문:"))
+        body = "\n".join(l for l in body.splitlines()
+                         if not l.strip().startswith(("- 원문:", ">")))
         if total + len(body) > cap:
             break
         chunks.append(body.strip())
