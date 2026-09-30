@@ -33,6 +33,8 @@ async ({start}) => {
   const get = async (p) => {
     const r = await fetch('/api' + p, {credentials: 'include'});
     if (!r.ok) throw new Error('claude.ai ' + r.status + ' ' + p.split('?')[0]);
+    if (!(r.headers.get('content-type') || '').includes('json'))
+      throw new Error('claude.ai 보안 검사 화면 ' + p.split('?')[0]);
     return r.json();
   };
   const orgs = await get('/organizations');
@@ -96,10 +98,23 @@ def fetch(day: date) -> list[dict]:
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(3000)  # 첫 화면 보안 검사가 끝날 시간
             relogin = "로그인 풀림 — 회사맥에서 `python3 ~/Documents/daily-automation/claude_app.py --login` 한 번"
-            if "/login" in page.url:
+            # 첫 화면 보안 검사(Cloudflare "Just a moment")가 끝나 API가 JSON을 줄 때까지 최대 60초.
+            # 고정 3초 대기는 가끔 검사 화면 HTML을 받아 실패했다(2026-09-30 재검증).
+            status = 0
+            for _ in range(30):
+                page.wait_for_timeout(2000)
+                if "/login" in page.url:
+                    raise RuntimeError(relogin)
+                status = page.evaluate("""async () => {
+                    const r = await fetch('/api/organizations', {credentials: 'include'});
+                    return (r.headers.get('content-type') || '').includes('json') ? r.status : -r.status; }""")
+                if status > 0:
+                    break
+            if status in (401, 403):
                 raise RuntimeError(relogin)
+            if status <= 0:
+                raise RuntimeError(f"claude.ai 보안 검사가 60초 안에 안 끝남({-status})")
             try:
                 return page.evaluate(_JS, {"start": start.strftime("%Y-%m-%dT%H:%M:%S")})
             except Exception as e:  # noqa: BLE001

@@ -271,18 +271,12 @@ _APP_STATUS: dict = {}
 
 
 def app_sessions(day: date) -> list[dict]:
-    """claude.ai 대화를 세션 형식으로. launchd(00:05)가 남긴 캐시를 읽고, 없으면 직접 수집한다
-    (수동 실행용 — cron에선 창을 못 띄워 실패할 수 있음). 실패 알림은 claude_app.py --cache가 한다."""
-    data = None
+    """claude.ai 대화를 세션 형식으로. claude_app.py --cache가 남긴 캐시만 읽는다(없으면 []).
+    🔴 2026-09-30 전용 창이 Cloudflare 사람 확인에 무한 반복으로 걸려 launchd 잡은 중지 상태."""
     try:
         data = json.loads((DATA_DIR / f"app-{day.isoformat()}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        try:
-            r = subprocess.run([APP_PY, str(Path(__file__).with_name("claude_app.py")), day.isoformat()],
-                               capture_output=True, text=True, timeout=600)
-            data = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
-        except Exception as e:  # noqa: BLE001
-            data = {"ok": False, "error": str(e)}
+        return []  # 수집 잡이 없거나 안 돈 날 — 창을 직접 띄우지 않는다(cron·Cloudflare, 2026-09-30)
     if not data or not data.get("ok"):
         _APP_STATUS.update(ok=False, error=str((data or {}).get("error", "캐시 없음"))[:200])
         print(f"[warn] 클로드 앱 수집 없음: {_APP_STATUS['error']}", file=sys.stderr)
