@@ -6,8 +6,8 @@
 재료(두 맥):
   - GPT 워크 = ~/.codex/sessions (originator codex_work_desktop 등 사람 세션만)
   - 클로드 CLI = ~/.claude/projects/*/*.jsonl (자동화 -p 세션 제외)
-  - 클로드 앱 = 앱이 구글 드라이브에 만든 `[하루기록] 날짜 시각 | 주제` 문서(폰·맥 공통)
-    + 볼트 하루기록/클로드앱-수신함.md의 그날 줄(맥 앱 obsidian-write 보조 경로)
+  - 클로드 앱 = claude_app.py가 수집 전용 프로필로 claude.ai 대화를 직접 읽음(폰·맥 공통, 2026-09-30~)
+    실패한 날만 옛 구글 드라이브 `[하루기록]` 문서를 보조로 읽음 + 볼트 클로드앱-수신함.md
   - PLAUD = 볼트 회의록/
 세션별로 시각·제목·요청·결과 한두 줄만 남긴다. 원문은 원래 폴더에 있고 경로만 적는다.
 결과 요약은 하루 한 번 구독 claude -p(sonnet). 토큰·키 모양 문자열은 지운다.
@@ -266,6 +266,50 @@ def drive_app_entries(day: date) -> list[str]:
     return sorted(out)
 
 
+APP_PY = "/opt/homebrew/bin/python3"  # playwright가 깔린 파이썬(venv에는 없음)
+_APP_STATUS: dict = {}
+
+
+def app_sessions(day: date) -> list[dict]:
+    """claude.ai 대화를 세션 형식으로. launchd(00:05)가 남긴 캐시를 읽고, 없으면 직접 수집한다
+    (수동 실행용 — cron에선 창을 못 띄워 실패할 수 있음). 실패 알림은 claude_app.py --cache가 한다."""
+    data = None
+    try:
+        data = json.loads((DATA_DIR / f"app-{day.isoformat()}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        try:
+            r = subprocess.run([APP_PY, str(Path(__file__).with_name("claude_app.py")), day.isoformat()],
+                               capture_output=True, text=True, timeout=600)
+            data = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        except Exception as e:  # noqa: BLE001
+            data = {"ok": False, "error": str(e)}
+    if not data or not data.get("ok"):
+        _APP_STATUS.update(ok=False, error=str((data or {}).get("error", "캐시 없음"))[:200])
+        print(f"[warn] 클로드 앱 수집 없음: {_APP_STATUS['error']}", file=sys.stderr)
+        return []
+    _APP_STATUS.update(ok=True)
+    out = []
+    for c in data.get("conversations") or []:
+        reqs, last, times = [], "", []
+        for m in c.get("messages") or []:
+            t = _kst(str(m.get("created_at") or ""))
+            txt = (m.get("text") or "").strip()
+            if not t or t.date() != day or not txt:
+                continue
+            times.append(t)
+            if m.get("sender") == "human":
+                reqs.append(txt)
+            else:
+                last = txt
+        if reqs:
+            out.append({"src": "claude_app", "mac": "앱", "title": nfc(c.get("name") or "") or _clip(reqs[0], 40),
+                        "start": min(times).strftime("%H:%M"), "end": max(times).strftime("%H:%M"),
+                        "active": active_minutes(times),
+                        "requests": [scrub(_clip(nfc(x), 400)) for x in reqs[:12]],
+                        "last": scrub(_clip(nfc(last), 900)), "path": f"https://claude.ai/chat/{c['uuid']}"})
+    return out
+
+
 # ── 요약 (하루 한 번 구독 -p) ──────────────────────────────────────
 def summarize(day: date, sessions: list[dict], meets: list[dict], app: list[str]) -> dict:
     if not (sessions or meets or app):
@@ -289,7 +333,7 @@ overview: 그날 Jay가 실제로 한 일의 큰 줄기 2~4줄(각 ~60자). 무�
 titles: 세션마다 무슨 일이었는지 한국어 명사구 제목(8~20자). 영어·명령문·"#" 머리말 금지.
 sessions: 세션마다 무엇을 했고 어떻게 끝났는지 한두 문장(~80자). 요청만 있고 결론이 없으면 "진행 중"이라고 쓴다.
 categories: 세션마다 하나 — "회사"(다니엘·데이원·조직·회사 대시보드 등 회사 일), "개인 툴"(개인 자동화·봇·SNS 트래커·자산 등 Jay 개인 도구 개발), "글쓰기·건강"(글쓰기·콘텐츠·건강·개인 생활), "기타".
-meetings: 회의마다 결론·결정 한두 문장(~80자). 결론이 없으면 "논의만"이라고 쓴다.
+meetings: 회의마다 결론·결정 한두 문장(~80자). 회의 이름을 앞에 되풀이하지 않는다. 결론이 없으면 "논의만"이라고 쓴다.
 규칙: 재료에 있는 사실만. 평가·조언·추측 금지. 사람 이름은 재료에 적힌 그대로. 해요체 대신 간결한 기록체(~했다, ~함).
 
 {chr(10).join(parts)[:300000]}"""
@@ -353,9 +397,12 @@ def render(day: date, sessions: list[dict], meets: list[dict], app: list[str], s
             out.append("")
     if app:
         out += ["## 클로드 앱 메모", ""] + app + [""]
+    if _APP_STATUS.get("ok") is False:
+        out += ["<!-- app:missing -->", ""]
     if sessions:
         out += ["> [!note]- 원문 위치", ">"]
-        out += [f"> - {s['start']} {scrub(titles.get(f'S{i}') or s['title'])}: `{s['path']}`"
+        out += [f"> - {s['start']} {scrub(titles.get(f'S{i}') or s['title'])}: "
+                + (f"[대화 열기]({s['path']})" if s["path"].startswith("http") else f"`{s['path']}`")
                 for i, s in enumerate(sessions, 1)]
         out.append("")
     return "\n".join(out)
@@ -379,12 +426,15 @@ DATA_DIR = HOME / ".local/state/jay-desk/daylog"
 
 
 def build(day: date) -> str:
-    sessions = collect_all(day)
+    _APP_STATUS.clear()
+    sessions = sorted(collect_all(day) + app_sessions(day), key=lambda r: r["start"])
     meets = meetings(day)
-    app = sorted(set(app_lines(day) + drive_app_entries(day)))
+    # 구글 드라이브 [하루기록] 문서는 앱 직접 수집이 실패한 날만 보조로 읽는다(앱 지침 은퇴 전 과도기)
+    app = sorted(set(app_lines(day) + ([] if _APP_STATUS.get("ok") else drive_app_entries(day))))
     summ = summarize(day, sessions, meets, app)
     cats = summ.get("categories") or {}
-    _LAST_DATA.update({"date": day.isoformat(), "meetings": len(meets), "app": len(app),
+    _LAST_DATA.update({"date": day.isoformat(), "meetings": len(meets),
+                       "app": len(app) + sum(s["src"] == "claude_app" for s in sessions),
                        "sessions": [{"title": s["title"], "src": s["src"], "active": s.get("active", 0),
                                      "category": cats.get(f"S{i}", "기타")}
                                     for i, s in enumerate(sessions, 1)]})
@@ -476,7 +526,9 @@ def main(argv: list[str]) -> int:
         for back in (1, 2):
             d = day - timedelta(days=back)
             old = read(d)
-            if old and "## 요약" not in old:
+            late_app = "<!-- app:missing -->" in old and (DATA_DIR / f"app-{d.isoformat()}.json").exists() \
+                and '"ok": true' in (DATA_DIR / f"app-{d.isoformat()}.json").read_text(encoding="utf-8")
+            if old and ("## 요약" not in old or late_app):
                 _LAST_DATA.clear()
                 print(f"↻ 요약 없는 {d} 다시 생성: {write(d, build(d))}")
                 save_data()
