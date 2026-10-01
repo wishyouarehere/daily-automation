@@ -174,7 +174,8 @@ def summary() -> str:
 
 # ── 문장별 피드백 (허브 /again 의 ♡·− 버튼) ──────────────────────
 # 허브 서버(health-page/serve_auth.py)가 한 줄씩 append한다: {"ts","id","text","v":+1|-1}
-FEEDBACK = Path.home() / ".local/state/jay-desk/again_feedback.jsonl"
+STATE_DIR = Path(os.getenv("AGAIN_STATE_DIR", str(Path.home() / ".local/state/jay-desk")))  # 테스트는 임시 폴더로
+FEEDBACK = STATE_DIR / "again_feedback.jsonl"
 REST_SCORE = -2  # 이 점수 이하 = 쉬는 문장(아침·저녁 선택 제외, 페이지 맨 아래). 볼트에서 빼는 건 Jay가 결정
 
 
@@ -197,6 +198,54 @@ def feedback_scores() -> dict[str, int]:
         except Exception:
             continue
     return out
+
+
+# ── 새로 온 문장(후보) ────────────────────────────────────────────
+# again_candidates.py가 매일 새벽 내 글·책 밑줄·웹에서 원문 대조를 통과한 문장만 올린다.
+# 허브 /again 의 ♡ = 볼트에 넣기, − = 버리기. 반영은 hub_build(30분 주기)가 promote_candidates()로 한다.
+CANDS = STATE_DIR / "again_candidates.json"
+
+
+def load_candidates() -> dict:
+    try:
+        d = json.loads(CANDS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    d.setdefault("items", [])      # [{id, text, section, source, ref, url, added}]
+    d.setdefault("dismissed", [])  # 버린 문장 id — 다시 올리지 않는다
+    d.setdefault("seen", {})       # 출처별로 이미 훑은 재료 id
+    return d
+
+
+def save_candidates(d: dict) -> None:
+    CANDS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CANDS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, CANDS)
+
+
+def promote_candidates() -> list[dict]:
+    """♡ 받은 후보는 볼트에 넣고, − 받은 후보는 버린다. 처리한 것 목록을 돌려준다."""
+    d = load_candidates()
+    if not d["items"]:
+        return []
+    scores = feedback_scores()
+    keep, done = [], []
+    for c in d["items"]:
+        sc = scores.get(c["id"], 0)
+        if sc > 0:
+            r = add(c["text"], c.get("section"))
+            done.append({**c, "result": r["status"]})
+        elif sc < 0:
+            d["dismissed"].append(c["id"])
+            done.append({**c, "result": "dismissed"})
+        else:
+            keep.append(c)
+    if done:
+        d["items"] = keep
+        d["dismissed"] = d["dismissed"][-2000:]
+        save_candidates(d)
+    return done
 
 
 # ── 아티팩트 페이지 ───────────────────────────────────────────────

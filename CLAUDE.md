@@ -23,6 +23,9 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
 - `jay_desk.py`: 아침·저녁 공용 부품(발송·캘린더·문장 선택·구독 LLM·말투 규칙).
 - `desk_sources.py`: 아침·저녁 재료 수집(Daily·회의록·야간참모 후보·결정 노트·AI 세션).
 - `again_bank.py` + `again_page.html`: 볼트 「다시-여기」 문장 DB와 아티팩트 페이지 생성.
+- `again_candidates.py`(+`again_sources_sns.py`): 매일 05:20 「다시, 여기」 새 문장 후보 수집(내 글·책 밑줄·웹,
+  원문 구간 검증+심사). 후보와 문장별 ♡·−는 허브 `/again`에서 받고 metrics-exchange `hub_build.py`가 반영한다.
+  테스트 `./venv/bin/python test_again.py`(임시 볼트·상태만 사용).
 - `evening_sync.py`: Todoist 완료 항목을 Obsidian Daily에 기록.
 - `regenerate_index.py`: Daily·결정로그·주간회고를 바탕으로 `_INDEX.md` 재생성.
 - `weekly_retro.py`: 주간 자료를 모아 회고 초안 생성.
