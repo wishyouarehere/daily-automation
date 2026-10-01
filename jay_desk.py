@@ -199,6 +199,10 @@ def quote_candidates(exclude_texts: set[str] | None = None) -> list[dict]:
     cutoff = (now().date() - timedelta(days=REUSE_DAYS)).isoformat()
     recent = {u["text"] for u in _used() if u.get("date", "") > cutoff}
     exclude = recent | (exclude_texts or set())
+    scores = again_bank.feedback_scores()
+    for l in lines:
+        l["score"] = scores.get(again_bank.sentence_id(l["text"]), 0)
+    lines = [l for l in lines if l["score"] > again_bank.REST_SCORE]  # 허브에서 −가 쌓인 문장은 쉰다
     cands = [l for l in lines if l["text"] not in exclude]
     if len(cands) < 5:
         last = {}
@@ -228,7 +232,11 @@ def pick_quote(cands: list[dict], qid: str | None) -> dict | None:
     by_id = {c["id"]: c for c in cands}
     if qid and qid in by_id:
         return by_id[qid]
-    return random.choice(cands) if cands else None
+    if not cands:
+        return None
+    # 허브 ♡가 많은 문장일수록 자주 나온다(가중치 1 + ♡ 점수, 최대 4)
+    weights = [1 + min(max(c.get("score", 0), 0), 3) for c in cands]
+    return random.choices(cands, weights=weights, k=1)[0]
 
 
 def render_quote(q: dict | None) -> str:
@@ -238,7 +246,8 @@ def render_quote(q: dict | None) -> str:
 
 
 def quotes_for_prompt(cands: list[dict]) -> str:
-    return "\n".join(f"[{c['id']}] {c['text']}" for c in cands)
+    return "\n".join(f"[{c['id']}]{' (Jay가 ♡ ' + str(c['score']) + ')' if c.get('score', 0) > 0 else ''} {c['text']}"
+                     for c in cands)
 
 
 # ── LLM (구독 claude -p) ───────────────────────────────────────────

@@ -172,6 +172,33 @@ def summary() -> str:
     return f"{n}문장 · " + " · ".join(f"{s['title']} {len(s['lines'])}" for s in secs)
 
 
+# ── 문장별 피드백 (허브 /again 의 ♡·− 버튼) ──────────────────────
+# 허브 서버(health-page/serve_auth.py)가 한 줄씩 append한다: {"ts","id","text","v":+1|-1}
+FEEDBACK = Path.home() / ".local/state/jay-desk/again_feedback.jsonl"
+REST_SCORE = -2  # 이 점수 이하 = 쉬는 문장(아침·저녁 선택 제외, 페이지 맨 아래). 볼트에서 빼는 건 Jay가 결정
+
+
+def sentence_id(text: str) -> str:
+    import hashlib
+    return hashlib.sha1(nfc(text).strip().encode("utf-8")).hexdigest()[:12]
+
+
+def feedback_scores() -> dict[str, int]:
+    """{문장 id: ♡ 수 − − 수}."""
+    out: dict[str, int] = {}
+    try:
+        rows = FEEDBACK.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for r in rows:
+        try:
+            d = json.loads(r)
+            out[d["id"]] = out.get(d["id"], 0) + (1 if int(d["v"]) > 0 else -1)
+        except Exception:
+            continue
+    return out
+
+
 # ── 아티팩트 페이지 ───────────────────────────────────────────────
 _TEMPLATE = Path(__file__).with_name("again_page.html")
 
