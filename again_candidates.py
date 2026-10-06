@@ -36,7 +36,12 @@ PENDING_MAX = 12        # 대기 후보가 이만큼 쌓이면 새로 안 모은
 PER_SOURCE = 2
 SNS_PY = str(Path.home() / "sns-tracker/.venv/bin/python")
 SNS_SCRIPT = str(Path(__file__).resolve().parent / "again_sources_sns.py")
-NOT_AUTHORS = {"책에서", "아침 1분", "모음", "현대", "신비주의", "스토아", "노자 · 장자 · 선"}
+NOT_AUTHORS = {"책에서", "아침 1분", "모음", "현대", "신비주의", "스토아", "노자 · 장자 · 선", "내 문장"}
+# 볼트에 아직 문장이 없어도 웹 로테이션에 넣는 좋아하는 작가. 값=검색어에 붙일 책 제목(동명이인 거르기, 날마다 돌아가며)
+FAVORITE_AUTHORS = {
+    "이하영": ["인생의 연금술", "말은 운명을 데려온다", "나는 나의 스무살을 가장 존중한다", "더 바이브"],
+    "네빌 고다드": ["", "전제의 법칙", "상상의 힘"],
+}
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 DRY = os.getenv("DRY_RUN") in ("1", "true", "TRUE")
 
@@ -224,11 +229,18 @@ def from_book(state: dict, known: set[str]) -> list[dict]:
 
 def from_web(state: dict, known: set[str]) -> list[dict]:
     authors = [s["title"] for s in again_bank.load() if s["lines"] and s["title"] not in NOT_AUTHORS]
+    authors += [a for a in FAVORITE_AUTHORS if squash(a) not in {squash(x) for x in authors}]
     if not authors:
         return []
-    author = authors[datetime.now().toordinal() % len(authors)]
+    day = datetime.now().toordinal()
+    author = authors[day % len(authors)]
+    hints = FAVORITE_AUTHORS.get(author) or [""]
+    hint = hints[(day // len(authors)) % len(hints)]
     seen = state["seen"].setdefault("web", [])
-    docs = kakao_search(f"{author} 책 구절", "blog") + kakao_search(f"{author} 명언", "web")
+    if hint:
+        docs = kakao_search(f"{author} {hint} 구절", "blog") + kakao_search(f"{author} {hint} 문장", "web")
+    else:
+        docs = kakao_search(f"{author} 책 구절", "blog") + kakao_search(f"{author} 명언", "web")
     pages = []
     for d in docs:
         url = d.get("url") or ""
