@@ -46,6 +46,7 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
 - 검증은 변경 파일에 가장 가까운 테스트와 안전한 dry-run부터 한다. 검증 중 실제
   메시지를 보내거나 실제 노트를 쓰지 않는다.
 - 자동화·봇·파이프라인·게이트를 추가·변경·은퇴하면 같은 작업에서
-  `~/sns-tracker/sysmap/registry.py`의 노드·서비스 라벨·엣지도 갱신한다.
+  `~/sns-tracker/sysmap/registry.py`의 노드·서비스 라벨·엣지도 갱신한다(`sysmap-edit open`→`sysmap-edit commit`,
+  기본 사본 `~/sns-tracker`에서 직접 고치거나 커밋하지 않는다).
 - 시간대는 KST 기준을 유지하고, 경로·스케줄·모델처럼 변하기 쉬운 값을 문서에
   중복 고정하지 않는다.
