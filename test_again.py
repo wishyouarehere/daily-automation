@@ -100,6 +100,22 @@ def test_judge_fails_closed():
         C.J.ask_json = orig
 
 
+def test_pick_authors_rotates_and_follows_taste():
+    from datetime import datetime
+    now = datetime(2026, 10, 10)
+    authors = ["가", "나", "다", "라"]
+    # 처음엔 안 나온 작가부터 순서대로
+    assert C.pick_authors(authors, [], {}, 3, now) == ["가", "나", "다"]
+    rows = [{"id": "a1", "author": "가", "date": "2026-10-09"}, {"id": "b1", "author": "나", "date": "2026-10-09"},
+            {"id": "c1", "author": "다", "date": "2026-10-09"}]
+    assert C.pick_authors(authors, rows, {}, 3, now)[0] == "라"  # 안 나온 작가 우선
+    rows2 = [{"id": "x", "author": a, "date": "2026-10-01"} for a in authors]
+    rows2 += [{"id": "l1", "author": "라", "date": "2026-10-01"}, {"id": "l2", "author": "라", "date": "2026-10-01"},
+              {"id": "d1", "author": "가", "date": "2026-10-01"}]
+    got = C.pick_authors(authors, rows2, {"l1": 1, "l2": 1, "d1": -1}, 2, now)
+    assert got[0] == "라" and "가" not in got  # ♡ 받은 작가 먼저, − 받은 작가는 뒤로
+
+
 def test_run_respects_pending_cap_without_llm():
     d = A.load_candidates()
     d["items"] = [{"id": f"{i:012x}", "text": f"대기 {i}.", "section": "모음"} for i in range(C.PENDING_MAX)]
@@ -111,7 +127,7 @@ def test_run_respects_pending_cap_without_llm():
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    order = ["test_sentence_id", "test_scores", "test_boundaries", "test_verify", "test_promote", "test_rested", "test_judge", "test_run"]
+    order = ["test_sentence_id", "test_scores", "test_boundaries", "test_verify", "test_promote", "test_rested", "test_judge", "test_pick", "test_run"]
     tests.sort(key=lambda f: next(i for i, p in enumerate(order) if f.__name__.startswith(p)))
     try:
         for t in tests:

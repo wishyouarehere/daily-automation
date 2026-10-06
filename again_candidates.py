@@ -34,6 +34,7 @@ import jay_desk as J  # noqa: E402
 
 PENDING_MAX = 12        # 대기 후보가 이만큼 쌓이면 새로 안 모은다(밀린 숙제 방지)
 PER_SOURCE = 2
+WEB_AUTHORS = 3        # 웹은 하루 작가 3명 × 1문장. 고르는 순서는 pick_authors
 SNS_PY = str(Path.home() / "sns-tracker/.venv/bin/python")
 SNS_SCRIPT = str(Path(__file__).resolve().parent / "again_sources_sns.py")
 NOT_AUTHORS = {"책에서", "아침 1분", "모음", "현대", "신비주의", "스토아", "노자 · 장자 · 선", "내 문장"}
@@ -85,11 +86,11 @@ def _kakao_key() -> str:
     return ""
 
 
-def kakao_search(query: str, kind: str = "blog", size: int = 6) -> list[dict]:
+def kakao_search(query: str, kind: str = "blog", size: int = 6, page: int = 1) -> list[dict]:
     key = _kakao_key()
     if not key:
         return []
-    url = f"https://dapi.kakao.com/v2/search/{kind}?" + urllib.parse.urlencode({"query": query, "size": size})
+    url = f"https://dapi.kakao.com/v2/search/{kind}?" + urllib.parse.urlencode({"query": query, "size": size, "page": page})
     req = urllib.request.Request(url, headers={"Authorization": f"KakaoAK {key}"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -124,7 +125,7 @@ def _examples(n: int = 6) -> str:
     return "\n".join(f"- {l['text']}" for l in random.sample(lines, min(n, len(lines))))
 
 
-def choose(materials: list[dict], what: str, job: str) -> list[dict]:
+def choose(materials: list[dict], what: str, job: str, limit: int = PER_SOURCE) -> list[dict]:
     """materials=[{ref, text}] → [{ref, text}] (원문 구간 그대로)."""
     if not materials:
         return []
@@ -133,7 +134,7 @@ def choose(materials: list[dict], what: str, job: str) -> list[dict]:
 마음·태도·감사·내면을 다잡는, 짧고 단단한 문장들이다. 지금 들어 있는 문장 예:
 {_examples()}
 
-아래는 {what}이다. 이 모음에 둘 만한 문장을 최대 {PER_SOURCE}개 골라라. 없으면 고르지 마라(억지로 채우지 않는다).
+아래는 {what}이다. 이 모음에 둘 만한 문장을 최대 {limit}개 골라라. 없으면 고르지 마라(억지로 채우지 않는다).
 규칙:
 - 재료 원문 안의 연속된 구간을 그대로 옮긴다. 완결된 문장 1~2개, 140자 이하.
 - 글자를 하나도 바꾸거나 더하지 않는다. 앞뒤 문맥 없이 혼자 읽혀야 한다.
@@ -235,43 +236,83 @@ def from_book(state: dict, known: set[str]) -> list[dict]:
     return out
 
 
-def from_web(state: dict, known: set[str]) -> list[dict]:
+def web_authors() -> list[str]:
     authors = [s["title"] for s in again_bank.load() if s["lines"] and s["title"] not in NOT_AUTHORS]
-    authors += [a for a in FAVORITE_AUTHORS if squash(a) not in {squash(x) for x in authors}]
+    return authors + [a for a in FAVORITE_AUTHORS if squash(a) not in {squash(x) for x in authors}]
+
+
+def pick_authors(authors: list[str], log_rows: list[dict], scores: dict[str, int], n: int,
+                 today: datetime | None = None) -> list[str]:
+    """오래 안 나온 작가 먼저. ♡ 받은 작가는 더 자주, − 받은 작가는 더 드물게(작가별 최근 판정 합 −2~+3, 1점=3일)."""
+    today = (today or datetime.now()).date()
+    last: dict[str, str] = {}
+    taste: dict[str, int] = {}
+    for r in log_rows:
+        a = r.get("author")
+        last[a] = max(last.get(a, ""), r.get("date", ""))
+        sc = scores.get(r.get("id"), 0)
+        taste[a] = taste.get(a, 0) + (1 if sc > 0 else -1 if sc < 0 else 0)
+
+    def key(a: str) -> float:
+        gap = (today - datetime.strptime(last[a], "%Y-%m-%d").date()).days if a in last else 99
+        return gap + 3 * max(-2, min(3, taste.get(a, 0)))
+    return sorted(authors, key=lambda a: (-key(a), authors.index(a)))[:n]
+
+
+def _author_pages(author: str, hint: str, seen: list[str], limit: int) -> list[dict]:
+    q1, q2 = (f"{author} {hint} 구절", f"{author} {hint} 문장") if hint else (f"{author} 책 구절", f"{author} 명언")
+    pages = []
+    for pg in range(1, 6):  # 앞쪽 결과를 이미 다 훑은 작가는 다음 쪽으로 넘어간다
+        docs = kakao_search(q1, "blog", page=pg) + kakao_search(q2, "web", page=pg)
+        if not docs:
+            break
+        for d in docs:
+            url = d.get("url") or ""
+            if not url or url in seen:
+                continue
+            seen.append(url)
+            txt = page_text(url)
+            if len(txt) >= 200 and squash(author) in squash(txt):
+                pages.append({"url": url, "text": txt[:5000], "author": author,
+                              "title": html.unescape(re.sub(r"<[^>]+>", "", d.get("title", "")))})
+            if len(pages) >= limit:
+                return pages
+    return pages
+
+
+def from_web(state: dict, known: set[str]) -> list[dict]:
+    authors = web_authors()
     if not authors:
         return []
-    day = datetime.now().toordinal()
-    author = authors[day % len(authors)]
-    hints = FAVORITE_AUTHORS.get(author) or [""]
-    hint = hints[(day // len(authors)) % len(hints)]
+    wlog = state.setdefault("web_log", [])  # [{id, author, date}] — 작가별 ♡·− 반응을 다음 선택에 쓴다
+    picked = pick_authors(authors, wlog, again_bank.feedback_scores(), WEB_AUTHORS)
     seen = state["seen"].setdefault("web", [])
-    if hint:
-        docs = kakao_search(f"{author} {hint} 구절", "blog") + kakao_search(f"{author} {hint} 문장", "web")
-    else:
-        docs = kakao_search(f"{author} 책 구절", "blog") + kakao_search(f"{author} 명언", "web")
     pages = []
-    for d in docs:
-        url = d.get("url") or ""
-        if not url or url in seen:
-            continue
-        seen.append(url)
-        txt = page_text(url)
-        if len(txt) >= 200 and squash(author) in squash(txt):
-            pages.append({"url": url, "text": txt[:6000], "title": html.unescape(re.sub(r"<[^>]+>", "", d.get("title", "")))})
-        if len(pages) >= 4:
-            break
-    log(f"웹: {author} 페이지 {len(pages)}개")
+    for a in picked:
+        hints = FAVORITE_AUTHORS.get(a) or [""]
+        hint = hints[sum(1 for r in wlog if r.get("author") == a) % len(hints)]
+        got = _author_pages(a, hint, seen, 2)
+        log(f"웹: {a} 페이지 {len(got)}개")
+        pages += got
     by = {f"w{i}": p for i, p in enumerate(pages)}
-    out = []
-    for pk in choose([{"ref": k, "text": p["text"]} for k, p in by.items()],
-                     f"웹 페이지 본문들. {author}의 문장으로 페이지에 명시된 것만 고른다(블로그 글쓴이 자신의 말·다른 저자 문장 제외)",
-                     "again_candidates_web"):
+    out, used = [], set()
+    for pk in choose([{"ref": k, "text": f"(작가: {p['author']})\n{p['text']}"} for k, p in by.items()],
+                     "웹 페이지 본문들. 각 재료 첫 줄의 작가 문장으로 페이지에 명시된 것만 고른다"
+                     "(블로그 글쓴이 자신의 말·다른 저자 문장 제외). 한 작가에서 1개까지",
+                     "again_candidates_web", limit=len(picked)):
         p = by.get(pk["ref"])
-        t = p and verify(pk, p["text"], known, author)
+        if not p or p["author"] in used:
+            continue
+        t = verify(pk, p["text"], known, p["author"])
         if t:
             known.add(squash(t))
-            out.append({"text": t, "section": author, "source": "web",
+            used.add(p["author"])
+            out.append({"text": t, "section": p["author"], "source": "web",
                         "ref": (p["title"] or urllib.parse.urlparse(p["url"]).netloc)[:50], "url": p["url"]})
+    today = datetime.now().strftime("%Y-%m-%d")
+    wlog += [{"id": again_bank.sentence_id(c["text"]), "author": c["section"], "date": today} for c in out]
+    wlog += [{"id": "", "author": a, "date": today} for a in picked if a not in used]  # 허탕도 '나온 날'로 친다
+    state["web_log"] = wlog[-500:]
     return out
 
 
