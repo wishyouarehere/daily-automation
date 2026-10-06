@@ -280,6 +280,20 @@ def _author_pages(author: str, hint: str, seen: list[str], limit: int) -> list[d
     return pages
 
 
+def _author_mine(author: str, seen: list[str], limit: int) -> list[dict]:
+    """그 작가 책에서 Jay가 직접 옮긴 문장(하루한문장·독서노트). 웹보다 먼저 쓴다."""
+    try:
+        r = subprocess.run([SNS_PY, SNS_SCRIPT, "author", author, ",".join(seen[-1500:]), str(limit)],
+                           capture_output=True, text=True, timeout=60)
+        rows = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except Exception as e:  # noqa: BLE001
+        log(f"내 밑줄({author}) 실패: {type(e).__name__}")
+        return []
+    seen += [x["id"] for x in rows]
+    return [{"url": x.get("url") or "", "text": x["body"], "author": author, "title": f"「{x['title']}」", "mine": True}
+            for x in rows]
+
+
 def from_web(state: dict, known: set[str]) -> list[dict]:
     authors = web_authors()
     if not authors:
@@ -291,23 +305,26 @@ def from_web(state: dict, known: set[str]) -> list[dict]:
     for a in picked:
         hints = FAVORITE_AUTHORS.get(a) or [""]
         hint = hints[sum(1 for r in wlog if r.get("author") == a) % len(hints)]
-        got = _author_pages(a, hint, seen, 2)
-        log(f"웹: {a} 페이지 {len(got)}개")
+        got = _author_mine(a, state["seen"].setdefault("author_mine", []), 2)  # 내가 옮긴 문장 먼저
+        if not got:
+            got = _author_pages(a, hint, seen, 2)
+        log(f"{'내 밑줄' if got and got[0].get('mine') else '웹'}: {a} 재료 {len(got)}개")
         pages += got
     by = {f"w{i}": p for i, p in enumerate(pages)}
     out, used = [], set()
     for pk in choose([{"ref": k, "text": f"(작가: {p['author']})\n{p['text']}"} for k, p in by.items()],
-                     "웹 페이지 본문들. 각 재료 첫 줄의 작가 문장으로 페이지에 명시된 것만 고른다"
+                     "작가별 재료들. Jay가 블로그에 옮긴 그 작가 책 문장(Jay 코멘트·번호·제목 제외)과 웹 페이지 본문이다. "
+                     "각 재료 첫 줄의 작가 문장으로 명시된 것만 고른다"
                      "(블로그 글쓴이 자신의 말·다른 저자 문장 제외). 한 작가에서 1개까지",
                      "again_candidates_web", limit=len(picked)):
         p = by.get(pk["ref"])
         if not p or p["author"] in used:
             continue
-        t = verify(pk, p["text"], known, p["author"])
+        t = verify(pk, p["text"], known, None if p.get("mine") else p["author"])  # 내 글은 서재 책 연결로 작가가 이미 확정
         if t:
             known.add(squash(t))
             used.add(p["author"])
-            out.append({"text": t, "section": p["author"], "source": "web",
+            out.append({"text": t, "section": p["author"], "source": "book" if p.get("mine") else "web",
                         "ref": (p["title"] or urllib.parse.urlparse(p["url"]).netloc)[:50], "url": p["url"]})
     today = datetime.now().strftime("%Y-%m-%d")
     wlog += [{"id": again_bank.sentence_id(c["text"]), "author": c["section"], "date": today} for c in out]
