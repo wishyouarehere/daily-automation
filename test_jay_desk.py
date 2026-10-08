@@ -63,7 +63,7 @@ class _Env:
         desk_sources.underline_candidates = lambda ex: [
             {"id": "U1", "text": "나는 오늘 을 산다.", "captured": "2026-09-18"}]
         self.answer = {}
-        jay_desk.ask_json = lambda prompt, job: self.answer
+        jay_desk.ask_json = lambda prompt, job, model="sonnet": self.answer
         return self
 
     def __exit__(self, *a):

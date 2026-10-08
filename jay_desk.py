@@ -251,13 +251,13 @@ def quotes_for_prompt(cands: list[dict]) -> str:
 
 
 # ── LLM (구독 claude -p) ───────────────────────────────────────────
-def ask_json(prompt: str, job: str) -> dict:
+def ask_json(prompt: str, job: str, model: str = "sonnet") -> dict:
     lib = str(Path.home() / "metrics-exchange/lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
     try:
         import claude_p
-        raw = claude_p.ask(prompt, model="sonnet", job=job, timeout=300) or ""
+        raw = claude_p.ask(prompt, model=model, job=job, timeout=300) or ""
         if not raw:
             print(f"[warn] LLM 실패: {claude_p.last_error()}", file=sys.stderr)
     except Exception as e:  # noqa: BLE001
