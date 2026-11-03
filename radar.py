@@ -18,7 +18,33 @@ from datetime import datetime
 import requests
 from PIL import Image
 
-from weather_brief import UA
+from weather_brief import UA, http_get
+
+MAX_STALE_MIN = 100      # 최신 발표가 이보다 오래되면 레이더 파이프라인이 멈춘 것
+MIN_COLOR_MATCH = 0.95   # 색칠된 픽셀 중 색상표와 정확히 맞는 비율 — 떨어지면 네이버가 색상표를 바꾼 것
+
+
+class RadarUnavailable(RuntimeError):
+    """레이더를 믿을 수 없음 — 호출자는 시간 단위 예보로 대신한다."""
+
+
+def check_image(img: Image.Image) -> None:
+    """이미지 규격·색상표가 우리가 아는 것과 같은지. 다르면 조용히 0을 읽는 대신 멈춘다."""
+    w, h = img.size
+    want = (_mx(NE_LNG) - _mx(SW_LNG)) / (_my(SW_LAT) - _my(NE_LAT))
+    if abs(w / h - want) / want > 0.01:
+        raise RadarUnavailable(f"레이더 이미지 비율이 달라짐({w}x{h}) — 범위(oPhotoBounds.MAPLE) 변경 의심")
+    px = img.load()
+    painted = exact = 0
+    for y in range(0, h, 4):
+        for x in range(0, w, 4):
+            p = px[x, y]
+            if p[3] == 0:
+                continue
+            painted += 1
+            exact += p[:3] in _COLORS
+    if painted >= 50 and exact / painted < MIN_COLOR_MATCH:
+        raise RadarUnavailable(f"레이더 색상표가 달라짐(일치 {exact}/{painted}) — oRainColorGuideMap 변경 의심")
 
 LIST_URL = "https://weather.naver.com/choiceApi/api"
 IMG_URL = "https://ssl.pstatic.net/staticv2.weather/responsive/image/srmImage/"
@@ -90,9 +116,10 @@ def value_at(img: Image.Image, lat: float, lng: float) -> float:
 def latest_frames() -> list[dict]:
     """최신 발표 회차의 프레임들(시각 오름차순)."""
     q = json.dumps({"visualMapSrmImage": {"photoType": "maple", "limit": 24}})
-    r = requests.get(LIST_URL, params={"choiceQuery": q}, headers=UA, timeout=15)
-    r.raise_for_status()
-    items = r.json()["results"]["choiceResult"]["visualMapSrmImage"]
+    try:
+        items = http_get(LIST_URL, params={"choiceQuery": q}, timeout=15).json()["results"]["choiceResult"]["visualMapSrmImage"]
+    except (KeyError, TypeError, ValueError) as e:
+        raise RadarUnavailable(f"레이더 목록 응답 형식이 달라짐: {e}") from e
     if not items:
         return []
     obs = max(x["obsYmdt"] for x in items)
@@ -102,13 +129,21 @@ def latest_frames() -> list[dict]:
 def forecast(points: dict[str, tuple[float, float]], now: datetime) -> dict[str, list[tuple[datetime, float]]]:
     """지점별 [(시각, mm/h)] — 지금 이후(10분 전 프레임 포함) 프레임만."""
     out: dict[str, list[tuple[datetime, float]]] = {k: [] for k in points}
-    for f in latest_frames():
+    frames = latest_frames()
+    if not frames:
+        raise RadarUnavailable("레이더 프레임 없음")
+    issued = datetime.strptime(frames[0]["obsYmdt"], "%Y%m%d%H%M").replace(tzinfo=now.tzinfo)
+    if (now - issued).total_seconds() > MAX_STALE_MIN * 60:
+        raise RadarUnavailable(f"레이더 최신 발표가 {issued:%H:%M}로 멈춤")
+    checked = False
+    for f in frames:
         t = datetime.strptime(f["photoYmdt"], "%Y%m%d%H%M").replace(tzinfo=now.tzinfo)
         if (now - t).total_seconds() > 600:
             continue
-        r = requests.get(IMG_URL + f["photoNm"], headers=UA, timeout=15)
-        r.raise_for_status()
-        img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+        img = Image.open(io.BytesIO(http_get(IMG_URL + f["photoNm"], timeout=15).content)).convert("RGBA")
+        if not checked:
+            check_image(img)
+            checked = True
         for k, (lat, lng) in points.items():
             out[k].append((t, value_at(img, lat, lng)))
     return out
@@ -117,15 +152,13 @@ def forecast(points: dict[str, tuple[float, float]], now: datetime) -> dict[str,
 def observed(point: tuple[float, float], t0: datetime, t1: datetime, tz) -> list[tuple[datetime, float]]:
     """[t0, t1] 사이 레이더 관측(발표 시각=관측 시각인 프레임) 지점값 — 알림 검증용."""
     q = json.dumps({"visualMapSrmImage": {"photoType": "maple", "limit": 72}})
-    r = requests.get(LIST_URL, params={"choiceQuery": q}, headers=UA, timeout=15)
-    r.raise_for_status()
     out = []
-    for f in r.json()["results"]["choiceResult"]["visualMapSrmImage"]:
+    for f in http_get(LIST_URL, params={"choiceQuery": q}, timeout=15).json()["results"]["choiceResult"]["visualMapSrmImage"]:
         if f["obsYmdt"] != f["photoYmdt"]:
             continue
         t = datetime.strptime(f["photoYmdt"], "%Y%m%d%H%M").replace(tzinfo=tz)
         if not t0 <= t <= t1:
             continue
-        img = Image.open(io.BytesIO(requests.get(IMG_URL + f["photoNm"], headers=UA, timeout=15).content)).convert("RGBA")
+        img = Image.open(io.BytesIO(http_get(IMG_URL + f["photoNm"], timeout=15).content)).convert("RGBA")
         out.append((t, value_at(img, *point)))
     return sorted(out)

@@ -30,6 +30,8 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
   지역 코드 찾기 `weather_brief.py find 동이름`, 테스트 `./venv/bin/python test_weather_brief.py`.
 - `rain_watch.py`: 비 오기 전 알림(07~21시 10분마다, 같은 비는 한 번만). 1순위 `radar.py`(네이버 지도 초단기강수예측 PNG를
   좌표→픽셀→색상표로 mm/h 판독, 키 불필요), 실패 시 시간대별 예보. 아침 날씨 한 통의 '출근길 비'도 같은 레이더를 쓴다.
+- `weather_health.py`: 날씨 잡 새벽 04:15 건강검사(네이버 JSON·레이더 신선도/비율/색상표·Open-Meteo). 실패=종료코드 1 → 04:40 auto_repair.
+  날씨 잡 자가 복구 순서: 요청 재시도 → 대체 경로(Open-Meteo·시간 단위 예보, 운영 경고) → 아침 한 통은 10:30까지 10분마다 따라잡기.
 - `evening_sync.py`: Todoist 완료 항목을 Obsidian Daily에 기록.
 - `regenerate_index.py`: Daily·결정로그·주간회고를 바탕으로 `_INDEX.md` 재생성.
 - `weekly_retro.py`: 주간 자료를 모아 회고 초안 생성.

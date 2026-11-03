@@ -136,6 +136,74 @@ def test_warn_fields():
     assert parse(cr, date(2026, 11, 4), "집").warns == ["호우주의보"]
 
 
+def test_selfheal_radar_guards():
+    from datetime import datetime, timedelta, timezone
+    from PIL import Image
+    import radar
+    img = Image.new("RGBA", (1197, 1253), (0, 0, 0, 0))
+    for x in range(0, 400, 4):
+        img.putpixel((x, 100), (15, 59, 235, 255))        # 색상표에 있는 색
+    radar.check_image(img)                                 # 정상 통과
+    bad = img.copy()
+    for x in range(0, 400, 4):
+        bad.putpixel((x, 100), (16, 60, 236, 255))         # 네이버가 색을 살짝 바꾼 상황
+    try:
+        radar.check_image(bad); assert False
+    except radar.RadarUnavailable:
+        pass
+    try:
+        radar.check_image(Image.new("RGBA", (1000, 1253))); assert False   # 범위 변경
+    except radar.RadarUnavailable:
+        pass
+    kst = timezone(timedelta(hours=9))
+    orig = radar.latest_frames
+    radar.latest_frames = lambda: [{"obsYmdt": "202611040900", "photoYmdt": "202611040900", "photoNm": "x"}]
+    try:
+        radar.forecast({"a": (37.5, 127.0)}, datetime(2026, 11, 4, 12, 0, tzinfo=kst)); assert False
+    except radar.RadarUnavailable as e:
+        assert "멈춤" in str(e)
+    finally:
+        radar.latest_frames = orig
+
+
+def test_selfheal_retry_and_fallback():
+    import os
+    import requests
+    import weather_brief as wb
+    os.environ["WX_NO_SLEEP"] = "1"
+    calls = {"n": 0}
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+    orig_get = requests.get
+    def flaky(url, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.ConnectionError("일시 장애")
+        return R()
+    requests.get = flaky
+    try:
+        assert isinstance(wb.http_get("https://example.invalid"), R) and calls["n"] == 3
+    finally:
+        requests.get = orig_get
+
+    orig_fetch, orig_om = wb.fetch_raw, wb.open_meteo_day
+    wb.fetch_raw = lambda code: (_ for _ in ()).throw(ValueError("구조 변경"))
+    wb.open_meteo_day = lambda lat, lng, today, name: Day(name, hourly=hourly({7: 5}), tmax=10)
+    os.environ["DRY_RUN"] = "1"
+    try:
+        day, fb = wb.load_day({"code": "x", "lat": 1, "lng": 2}, date(2026, 11, 4), "집")
+        assert fb and day.tmax == 10
+        try:
+            wb.load_day({"code": "x"}, date(2026, 11, 4), "집"); assert False   # 좌표 없으면 대체 불가 → 실패로
+        except ValueError:
+            pass
+    finally:
+        wb.fetch_raw, wb.open_meteo_day = orig_fetch, orig_om
+        os.environ.pop("DRY_RUN", None)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -35,9 +35,9 @@ def where(now: datetime, workday: bool, cfg: dict) -> tuple[str, dict]:
     return "home", cfg["home"]
 
 
-def upcoming(code: str, name: str, today: date) -> dict[int, dict]:
-    """오늘 시각 → 예보. 키가 생기면 여기서 레이더 초단기강수예측을 우선한다."""
-    return wb.parse(wb.fetch_raw(code), today, name).hourly
+def upcoming(loc: dict, name: str, today: date) -> dict[int, dict]:
+    """오늘 시각 → 시간 단위 예보(네이버, 실패 시 Open-Meteo)."""
+    return wb.load_day(loc, today, name)[0].hourly
 
 
 def episode(hourly: dict[int, dict], now_h: int) -> tuple[int, int, dict] | None:
@@ -175,16 +175,14 @@ def run() -> int:
             raise RuntimeError("레이더 프레임 없음")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 레이더 실패 → 시간 단위 예보로 대신: {e}", file=sys.stderr)
-        try:  # 조용히 정밀도만 떨어지는 걸 막는다 — warning이라 반복될 때만 Jay에게 올라간다
-            sys.path.insert(0, str(Path.home() / "ops-bot"))
-            import notify_policy
-            notify_policy.send(f"비 알림이 레이더를 못 읽어 1시간 단위 예보로 대신하고 있어요(rain_watch)\n{e}",
-                               severity="warning", source="rain_watch")
-        except Exception:  # noqa: BLE001
-            pass
+        # 조용히 정밀도만 떨어지는 걸 막는다 — warning이라 반복될 때만 Jay에게 올라간다
+        wb.warn_ops(f"비 알림이 레이더를 못 읽어 1시간 단위 예보로 대신하고 있어요(rain_watch)\n{e}")
         return run_hourly(now, today, key, loc, st)
 
-    verify_alerts(now)
+    try:   # 검증 실패가 알림 자체를 막으면 안 된다
+        verify_alerts(now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 적중 검증 건너뜀: {e}", file=sys.stderr)
     ep = radar_episode(series)
     if not ep:
         print(f"[ok] {now:%H:%M} {key} 레이더 비 없음")
@@ -200,7 +198,7 @@ def run() -> int:
         return 0
     later, snow = None, False
     try:
-        hrs = upcoming(loc["code"], place, today)
+        hrs = upcoming(loc, place, today)
         snow = "눈" in (hrs.get(start.hour) or {}).get("txt", "")
         if end is None:  # 레이더 끝까지 계속이면 시간 예보로 그치는 시각을 짐작
             h = series[-1][0].hour
@@ -266,17 +264,14 @@ def verify_alerts(now: datetime) -> None:
     misses = sum(1 for x in judged if x["hit"] is False)
     if any(x in todo and x.get("hit") is False for x in rows) and misses >= MISS_LIMIT:
         try:
-            sys.path.insert(0, str(Path.home() / "ops-bot"))
-            import notify_policy
-            notify_policy.send(f"비 알림이 최근 {len(judged)}건 중 {misses}건 빗나갔어요(rain_watch)\n"
-                               "레이더 관측에 그 시각 비가 없었어요. 문턱(RADAR_WET)·좌표 점검이 필요해요.",
-                               severity="warning", source="rain_watch")
+            wb.warn_ops(f"비 알림이 최근 {len(judged)}건 중 {misses}건 빗나갔어요(rain_watch)\n"
+                        "레이더 관측에 그 시각 비가 없었어요. 문턱(RADAR_WET)·좌표 점검이 필요해요.")
         except Exception as e:  # noqa: BLE001
             print(f"[warn] 빗나감 알림 실패: {e}", file=sys.stderr)
 
 
 def run_hourly(now: datetime, today: date, key: str, loc: dict, st: dict) -> int:
-    hourly = upcoming(loc["code"], loc.get("name", key), today)
+    hourly = upcoming(loc, loc.get("name", key), today)
     if not hourly:
         raise RuntimeError("시간대별 예보가 비어 있습니다(페이지 구조 변경 의심)")
     ep = episode(hourly, now.hour)

@@ -9,7 +9,9 @@ Jay 요청: 절대 기온은 감이 없으니 "어제보다 얼마나 춥냐·�
 - 지역: ~/.config/jay-weather.json {"home": {"name", "code"}, "office": {"name", "code"}}.
   코드는 `weather_brief.py find 역삼동`으로 찾는다. 근무일엔 아침=집·낮과 저녁=회사, 쉬는 날은 집만.
 - 발송 시각: Jay 기상 기록(2026-09~10, 평일 대개 06:40~08:00·주말 07:00~09:00) 기준
-  근무일 06:50·쉬는 날 07:50. cron은 두 칸 다 돌고 오늘이 어느 칸인지는 work_calendar가 정한다.
+  근무일 06:50·쉬는 날 07:50(work_calendar 판정). cron은 06:50~10:20 10분마다 — 놓치면 다음 실행이 따라잡는다.
+- 자가 복구: 요청 재시도 → 네이버가 깨지면 Open-Meteo 대체 예보(표시+운영 경고) → 10:30까지 못 보내면
+  운영 경고 + 종료코드 1(04:40 auto_repair 대상). 매일 04:15 weather_health.py가 구조 변경을 미리 잡는다.
 - LLM 없음. 문장은 규칙으로 조립한다. 드라이런 `DRY_RUN=1`.
 """
 from __future__ import annotations
@@ -37,11 +39,52 @@ ACTIVE_WORK = range(7, 22)   # 근무일에 밖에 있을 수 있는 시간
 ACTIVE_OFF = range(9, 23)
 
 
+# ── 공통: 재시도 GET (일시 장애는 잡 안에서 스스로 넘긴다) ───────────────
+RETRY_WAITS = (5, 20)
+
+
+def http_get(url: str, **kw) -> requests.Response:
+    import time
+    kw.setdefault("headers", UA)
+    kw.setdefault("timeout", 20)
+    for i, wait in enumerate((*RETRY_WAITS, None)):
+        try:
+            r = requests.get(url, **kw)
+            if r.status_code >= 500 or r.status_code == 429:
+                raise requests.HTTPError(f"{r.status_code} {url}")
+            r.raise_for_status()
+            return r
+        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+            if wait is None or (isinstance(e, requests.HTTPError) and "40" in str(e)[:3]):
+                raise
+            print(f"[retry {i + 1}] {e}", file=sys.stderr)
+            time.sleep(0 if os.getenv("WX_NO_SLEEP") else wait)
+    raise RuntimeError("unreachable")
+
+
+_WARNED: set[str] = set()
+
+
+def warn_ops(text: str) -> None:
+    """운영 채널 경고(notify_policy, warning — 반복될 때만 Jay에게 올라간다). 실패해도 본 작업은 계속."""
+    first = text.split("\n")[0]
+    if first in _WARNED:   # 한 실행에서 같은 경고는 한 번
+        return
+    _WARNED.add(first)
+    if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
+        print(f"[ops] {text}", file=sys.stderr)
+        return
+    try:
+        sys.path.insert(0, str(Path.home() / "ops-bot"))
+        import notify_policy
+        notify_policy.send(text, severity="warning", source="weather")
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 운영 경고 실패: {e}", file=sys.stderr)
+
+
 # ── 네이버 날씨 ──────────────────────────────────────────────
 def fetch_raw(code: str) -> dict:
-    r = requests.get(f"https://weather.naver.com/today/{code}", headers=UA, timeout=20)
-    r.raise_for_status()
-    h = r.text
+    h = http_get(f"https://weather.naver.com/today/{code}").text
     key = "var blockApiResult = "
     i = h.index(key) + len(key)
     obj, _ = json.JSONDecoder().raw_decode(h[i:])
@@ -49,10 +92,9 @@ def fetch_raw(code: str) -> dict:
 
 
 def find_region(q: str) -> list[tuple[str, str]]:
-    r = requests.get("https://ac.weather.naver.com/ac", headers=UA, timeout=10,
+    r = http_get("https://ac.weather.naver.com/ac", timeout=10,
                      params={"q_enc": "utf-8", "r_format": "json", "r_enc": "utf-8",
                              "r_lt": "1", "st": "1", "q": q})
-    r.raise_for_status()
     items = (r.json().get("items") or [[]])[0]
     return [(it[0][0], it[1][0]) for it in items]
 
@@ -117,6 +159,64 @@ def parse(cr: dict, today: date, name: str) -> Day:
         if t:
             d.warns.append(t)
     return d
+
+
+# ── 대체 소스: 네이버가 깨졌을 때 Open-Meteo(키 없음) ─────────────────────
+WMO_RAIN = set(range(51, 68)) | {80, 81, 82, 95, 96, 99}
+WMO_SNOW = set(range(71, 78)) | {85, 86}
+
+
+def open_meteo_day(lat: float, lng: float, today: date, name: str) -> Day:
+    """네이버 파싱이 실패할 때만 쓰는 대체 예보. 어제 값도 모델 재분석이라 실측보다 거칠다."""
+    r = http_get("https://api.open-meteo.com/v1/forecast", params={
+        "latitude": lat, "longitude": lng, "timezone": "Asia/Seoul", "wind_speed_unit": "ms",
+        "past_days": 1, "forecast_days": 1,
+        "hourly": "temperature_2m,apparent_temperature,precipitation_probability,precipitation,"
+                  "wind_speed_10m,weather_code",
+        "daily": "temperature_2m_max,temperature_2m_min"})
+    j = r.json()
+    hr, dl = j["hourly"], j["daily"]
+    d = Day(name=name)
+    by_time = {t: i for i, t in enumerate(hr["time"])}
+    for i, t in enumerate(hr["time"]):
+        if not t.startswith(today.isoformat()):
+            continue
+        code = hr["weather_code"][i]
+        txt = "눈" if code in WMO_SNOW else ("비" if code in WMO_RAIN else "")
+        d.hourly[int(t[11:13])] = {"t": hr["temperature_2m"][i], "feel": hr["apparent_temperature"][i],
+                                  "rain": float(hr["precipitation_probability"][i] or 0),
+                                  "amt": float(hr["precipitation"][i] or 0), "txt": txt,
+                                  "wind": float(hr["wind_speed_10m"][i] or 0)}
+    days = dl["time"]
+    if today.isoformat() in days:
+        k = days.index(today.isoformat())
+        d.tmin, d.tmax = dl["temperature_2m_min"][k], dl["temperature_2m_max"][k]
+        if k > 0:
+            d.yday_min, d.yday_max = dl["temperature_2m_min"][k - 1], dl["temperature_2m_max"][k - 1]
+    now = jay_desk.now()
+    cur = f"{today.isoformat()}T{now.hour:02d}:00"
+    prev = f"{(today - timedelta(days=1)).isoformat()}T{now.hour:02d}:00"
+    if cur in by_time and prev in by_time:
+        d.now_t = hr["temperature_2m"][by_time[cur]]
+        d.now_vs_yday = d.now_t - hr["temperature_2m"][by_time[prev]]
+    if not d.hourly or d.tmax is None:
+        raise RuntimeError("Open-Meteo 응답에 오늘 예보가 없습니다")
+    return d
+
+
+def load_day(loc: dict, today: date, name: str) -> tuple[Day, bool]:
+    """(Day, 대체 소스 여부). 네이버 → 실패 시 Open-Meteo."""
+    try:
+        day = parse(fetch_raw(loc["code"]), today, name)
+        if not day.hourly or day.tmax is None:
+            raise RuntimeError("네이버 날씨 페이지에서 시간대별·최고기온을 못 읽음(구조 변경 의심)")
+        return day, False
+    except Exception as e:  # noqa: BLE001
+        if "lat" not in loc:
+            raise
+        print(f"[warn] 네이버 실패 → Open-Meteo 대체: {e}", file=sys.stderr)
+        warn_ops(f"아침 날씨가 네이버 날씨를 못 읽어 대체 예보(Open-Meteo)로 보냈어요\n{e}")
+        return open_meteo_day(loc["lat"], loc["lng"], today, name), True
 
 
 # ── 어제 스냅샷 (실측 대체·저녁 비교용) ──────────────────────────
@@ -348,26 +448,47 @@ def sent_flag(today: date) -> Path:
     return STATE / f"sent-{today.isoformat()}"
 
 
+SLOT_WORK, SLOT_OFF = (6, 50), (7, 50)   # 발송 목표 시각(근무일·쉬는 날)
+DEADLINE = (10, 30)                      # 이때까지 못 보냈으면 오늘은 포기하고 운영 경고
+
+
 def run(slot: str | None, force: bool = False) -> int:
-    today = jay_desk.now().date()
+    """cron이 06:50~10:20 사이 10분마다 부른다. 목표 시각이 지났고 아직 안 보냈으면 보낸다.
+
+    맥이 잠들었거나 네트워크·네이버가 잠깐 죽어 목표 시각을 놓쳐도, 다음 10분 실행이 따라잡는다(멱등: 하루 1통).
+    """
+    now = jay_desk.now()
+    today = now.date()
     workday = not jay_desk.is_weekend(today)
-    if slot and not force and slot != ("work" if workday else "off"):
-        print(f"[skip] {today} {'근무일' if workday else '쉬는 날'} — {slot} 칸 아님")
+    target = SLOT_WORK if workday else SLOT_OFF
+    if not force and (now.hour, now.minute) < target:
+        print(f"[skip] {now:%H:%M} 아직 {target[0]:02d}:{target[1]:02d} 전")
+        return 0
+    if not force and (now.hour, now.minute) > DEADLINE:
         return 0
     dry = os.getenv("DRY_RUN") in ("1", "true", "TRUE")
     if not dry and not force and sent_flag(today).exists():
-        print(f"[skip] {today} 이미 보냄")
         return 0
+    try:
+        return _send(today, workday, dry)
+    except Exception as e:  # noqa: BLE001
+        last_try = (now + timedelta(minutes=10)).replace(second=0) > now.replace(hour=DEADLINE[0], minute=DEADLINE[1])
+        if last_try:
+            warn_ops(f"오늘 아침 날씨를 못 보냈어요(weather_brief, {now:%H:%M}까지 재시도)\n{e}")
+        raise   # 종료코드 1 → cron-status → 04:40 자동 수리 대상
 
+
+def _send(today: date, workday: bool, dry: bool) -> int:
     cfg = load_config()
     yday = today - timedelta(days=1)
-    home = parse(fetch_raw(cfg["home"]["code"]), today, cfg["home"].get("name", "집"))
-    office = None
+    home, fb_home = load_day(cfg["home"], today, cfg["home"].get("name", "집"))
+    office, fb_office = None, False
     oc = cfg.get("office") or {}
     if workday and oc.get("code") and oc["code"] != cfg["home"]["code"]:
-        office = parse(fetch_raw(oc["code"]), today, oc.get("name", "회사"))
-    if not home.hourly:
-        raise RuntimeError("네이버 날씨 시간대별 예보가 비어 있습니다(페이지 구조 변경 의심)")
+        try:
+            office, fb_office = load_day(oc, today, oc.get("name", "회사"))
+        except Exception as e:  # noqa: BLE001 — 회사 쪽만 실패하면 집 기준으로라도 보낸다
+            print(f"[warn] 회사 날씨 실패 — 집 기준으로 보냄: {e}", file=sys.stderr)
 
     brief = build(home, office, workday, load_snapshot("home", yday),
                   load_snapshot("office", yday) if office else {})
@@ -376,11 +497,13 @@ def run(slot: str | None, force: bool = False) -> int:
         brief.prep = [p for p in brief.prep if not p.startswith("접는 우산")]
         brief.prep.insert(0, radar_line)
     text = render(brief, home, office, today)
+    if fb_home or fb_office:
+        text += "\n<i>네이버 날씨가 안 열려 대체 예보로 보냈어요</i>"
     save_snapshot("home", today, home, brief.keys)
-    if oc.get("code"):
-        o_today = office or (parse(fetch_raw(oc["code"]), today, oc.get("name", "회사"))
-                             if oc["code"] != cfg["home"]["code"] else home)
-        save_snapshot("office", today, o_today)
+    if office is not None:
+        save_snapshot("office", today, office)
+    elif oc.get("code") == cfg["home"]["code"]:
+        save_snapshot("office", today, home)
 
     jay_desk.send_telegram(text)
     if not dry:
