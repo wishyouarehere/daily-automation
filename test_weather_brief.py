@@ -53,6 +53,19 @@ def test_evening_uses_yesterday_snapshot():
     assert "저녁 · 어제보다 꽤 쌀쌀해요 (−4도)" in b.rows, b.rows
 
 
+def test_rain_episode_and_message():
+    from datetime import datetime
+    import rain_watch as rw
+    h = hourly({h: 10 for h in range(7, 22)}, rain={15: 70, 16: 80}, txt={15: "비", 16: "비"})
+    assert rw.episode(h, 12) is None                      # 3시간 뒤 비는 아직
+    s, e, peak = rw.episode(h, 14)
+    assert (s, e) == (15, 16)
+    msg = rw.message(s, e, peak, datetime(2026, 11, 4, 14, 30), "성수동")
+    assert "15시쯤(30분 뒤) 비가 시작돼요" in msg and "17시까지" in msg, msg
+    s, e, peak = rw.episode(h, 15)
+    assert "지금부터 비가 와요" in rw.message(s, e, peak, datetime(2026, 11, 4, 15, 5), "집")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
