@@ -26,6 +26,8 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
 - `again_candidates.py`(+`again_sources_sns.py`): 매일 05:20 「다시, 여기」 새 문장 후보 수집(내 글·책 밑줄·웹,
   원문 구간 검증+심사). 후보와 문장별 ♡·−는 허브 `/again`에서 받고 metrics-exchange `hub_build.py`가 반영한다.
   테스트 `./venv/bin/python test_again.py`(임시 볼트·상태만 사용).
+- `weather_brief.py`: 치프봇 아침 날씨 한 통(네이버 날씨, 어제 대비 체감·챙길 것, LLM 없음). 지역 `~/.config/jay-weather.json`,
+  지역 코드 찾기 `weather_brief.py find 동이름`, 테스트 `./venv/bin/python test_weather_brief.py`.
 - `evening_sync.py`: Todoist 완료 항목을 Obsidian Daily에 기록.
 - `regenerate_index.py`: Daily·결정로그·주간회고를 바탕으로 `_INDEX.md` 재생성.
 - `weekly_retro.py`: 주간 자료를 모아 회고 초안 생성.
