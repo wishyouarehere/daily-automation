@@ -112,3 +112,20 @@ def forecast(points: dict[str, tuple[float, float]], now: datetime) -> dict[str,
         for k, (lat, lng) in points.items():
             out[k].append((t, value_at(img, lat, lng)))
     return out
+
+
+def observed(point: tuple[float, float], t0: datetime, t1: datetime, tz) -> list[tuple[datetime, float]]:
+    """[t0, t1] 사이 레이더 관측(발표 시각=관측 시각인 프레임) 지점값 — 알림 검증용."""
+    q = json.dumps({"visualMapSrmImage": {"photoType": "maple", "limit": 72}})
+    r = requests.get(LIST_URL, params={"choiceQuery": q}, headers=UA, timeout=15)
+    r.raise_for_status()
+    out = []
+    for f in r.json()["results"]["choiceResult"]["visualMapSrmImage"]:
+        if f["obsYmdt"] != f["photoYmdt"]:
+            continue
+        t = datetime.strptime(f["photoYmdt"], "%Y%m%d%H%M").replace(tzinfo=tz)
+        if not t0 <= t <= t1:
+            continue
+        img = Image.open(io.BytesIO(requests.get(IMG_URL + f["photoNm"], headers=UA, timeout=15).content)).convert("RGBA")
+        out.append((t, value_at(img, *point)))
+    return sorted(out)

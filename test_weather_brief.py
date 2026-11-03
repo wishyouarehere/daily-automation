@@ -91,6 +91,51 @@ def test_radar_pixel_and_colors():
     assert radar.color_value((200, 200, 200, 255)) == 0.0     # 색상표와 먼 색
 
 
+def test_redteam_noise_filters():
+    from datetime import datetime, timedelta, timezone
+    import rain_watch as rw
+    kst = timezone(timedelta(hours=9))
+    t0 = datetime(2026, 11, 4, 14, 0, tzinfo=kst)
+    mk = lambda vals: [(t0 + timedelta(minutes=10 * i), v) for i, v in enumerate(vals)]
+    assert rw.radar_episode(mk([0, 0.6, 0, 0, 0])) is None            # 10분 스치는 약한 비는 무시
+    assert rw.radar_episode(mk([0, 1.2, 0, 0]))[0].minute == 10        # 짧아도 1mm/h↑면 비
+    s, e, p, last = rw.radar_episode(mk([0, 0.6, 0, 0.7, 0.8, 0]))     # 첫 잡음 건너뛰고 지속되는 비
+    assert s.minute == 30 and e.minute == 50
+    obs = mk([0, 0, 0.9, 0])
+    assert rw.judge({"start": (t0 + timedelta(minutes=10)).isoformat()}, obs) is True
+    assert rw.judge({"start": (t0 + timedelta(minutes=10)).isoformat()}, mk([0, 0, 0.2, 0])) is False
+    assert "눈이 시작돼요" in rw.radar_message(t0 + timedelta(minutes=30), None, 1, t0, "집", snow=True)
+
+
+def test_redteam_brief_wording():
+    temps = {h: 10 for h in range(7, 22)}
+    # 아침은 추운데 낮은 따뜻 → 머리줄이 한쪽만 말하면 틀린 정보
+    home = Day("집", hourly=hourly(temps), tmin=2, tmax=20, now_t=2, now_vs_yday=-4, yday_max=16)
+    b = build(home, None, True, {}, {})
+    assert b.headline.startswith("아침은 어제보다 꽤 쌀쌀해요, 낮은 꽤 따뜻해요"), b.headline
+    # 어제도 '두꺼운 외투'를 말했고 큰 변화 없으면 오늘은 빼기
+    cold = {h: 1 for h in range(7, 22)}
+    d = Day("집", hourly=hourly(cold), tmin=1, tmax=1, now_vs_yday=-1, yday_max=2)
+    assert any(p.startswith("두꺼운 외투") for p in build(d, None, True, {}, {}).prep)
+    assert not any(p.startswith("두꺼운 외투") for p in build(d, None, True, {"prep_keys": ["coat"]}, {}).prep)
+    # 확 추워진 날은 어제 말했어도 다시
+    d2 = Day("집", hourly=hourly(cold), tmin=1, tmax=1, now_vs_yday=-6, yday_max=7)
+    assert any(p.startswith("두꺼운 외투") for p in build(d2, None, True, {"prep_keys": ["coat"]}, {}).prep)
+    # 비교도 챙길 것도 없으면 빈 메시지 대신 실패
+    empty = Day("집", hourly=hourly({h: 10 for h in range(7, 22)}))
+    try:
+        render(build(empty, None, True, {}, {}), empty, None, date(2026, 11, 4))
+        assert False, "빈 메시지가 렌더됨"
+    except RuntimeError:
+        pass
+
+
+def test_warn_fields():
+    from weather_brief import parse
+    cr = {"notice~~1": {"warnList": [{"stypeNm": "호우", "warnLevelName": "주의보"}]}}
+    assert parse(cr, date(2026, 11, 4), "집").warns == ["호우주의보"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

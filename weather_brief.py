@@ -112,9 +112,10 @@ def parse(cr: dict, today: date, name: str) -> Day:
             d.yday_min, d.yday_max = _num(p.get("minTmpr")), _num(p.get("maxTmpr"))
 
     for w in (cr.get("notice~~1") or {}).get("warnList") or []:
-        t = w.get("warnTitle") or w.get("title") or w.get("wrnTxt")
+        # 네이버 화면 코드 기준 필드: stypeNm(호우·대설·강풍…) + warnLevelName(주의보·경보)
+        t = f"{w.get('stypeNm') or ''}{w.get('warnLevelName') or ''}".strip()
         if t:
-            d.warns.append(str(t))
+            d.warns.append(t)
     return d
 
 
@@ -123,13 +124,13 @@ def _snap_path(key: str, d: date) -> Path:
     return STATE / f"{d.isoformat()}-{key}.json"
 
 
-def save_snapshot(key: str, today: date, day: Day) -> None:
+def save_snapshot(key: str, today: date, day: Day, prep_keys: list[str] | None = None) -> None:
     if os.getenv("DRY_RUN") in ("1", "true", "TRUE"):
         return
     STATE.mkdir(parents=True, exist_ok=True)
     _snap_path(key, today).write_text(json.dumps(
-        {"tmin": day.tmin, "tmax": day.tmax, "hourly": {str(k): v["t"] for k, v in day.hourly.items()}},
-        ensure_ascii=False), encoding="utf-8")
+        {"tmin": day.tmin, "tmax": day.tmax, "hourly": {str(k): v["t"] for k, v in day.hourly.items()},
+         "prep_keys": prep_keys or []}, ensure_ascii=False), encoding="utf-8")
     for old in STATE.glob("*.json"):
         if old.name[:10] < (today - timedelta(days=14)).isoformat():
             old.unlink(missing_ok=True)
@@ -176,6 +177,13 @@ class Brief:
     headline: str
     rows: list[str]
     prep: list[str]
+    keys: list[str] = field(default_factory=list)   # 오늘 낸 '챙길 것' 종류(내일 반복 억제용)
+
+
+# 어제도 같은 말을 했으면 오늘은 빼는 종류(옷차림·바람). 비·특보·미세먼지·레이더는 그날 사건이라 매번 낸다.
+REPEATABLE = ("layer", "coat", "gloves", "heat", "wind")
+PREP_KEY = {"벗기 쉬운 겉옷": "layer", "겉옷": "layer", "두꺼운 외투": "coat", "장갑·목도리": "gloves",
+            "더위 대비": "heat", "바람": "wind"}
 
 
 def build(home: Day, office: Day | None, workday: bool,
@@ -211,13 +219,17 @@ def build(home: Day, office: Day | None, workday: bool,
 
     # 머리줄: 아침·낮 중 더 크게 다른 쪽이 오늘의 인상
     deltas = [x for x in (m_delta, d_delta) if x is not None]
-    if deltas:
+    def short(delta, ref):
+        return feel(delta, ref).split(" (")[0].replace("어제보다 ", "")
+    if (m_delta is not None and d_delta is not None and abs(m_delta) >= 1.5 and abs(d_delta) >= 1.5
+            and (m_delta > 0) != (d_delta > 0)):
+        headline = f"아침은 어제보다 {short(m_delta, m_ref)}, 낮은 {short(d_delta, day_src.tmax)}"
+    elif deltas:
         main = max(deltas, key=abs)
         ref = day_src.tmax if main is d_delta else m_ref
-        head = feel(main, ref).split(" (")[0]
-        headline = "오늘은 " + head
+        headline = "오늘은 " + feel(main, ref).split(" (")[0]
     else:
-        headline = "오늘 날씨"
+        headline = ""
 
     # 챙길 것
     prep: list[str] = []
@@ -253,15 +265,27 @@ def build(home: Day, office: Day | None, workday: bool,
         prep.append(f"바람 — 초속 {windy:.0f}m, 실제보다 더 춥게 느껴져요")
     air = home.air or (office.air if office else "")
     if air:
-        prep.append(f"마스크 — 미세먼지 {air}")
+        prep.append(f"마스크 — 지금 미세먼지 {air}")
     for w in dict.fromkeys(home.warns + (office.warns if office else [])):
         prep.insert(0, f"특보 — {w}")
-    return Brief(headline=headline, rows=rows, prep=prep)
+
+    # 어제도 같은 옷차림 조언을 했고 오늘이 어제보다 확 춥거나 덥지 않으면 빼기(매일 같은 처방 금지)
+    said = set(yday_home.get("prep_keys") or [])
+    big_change = any(abs(x) >= 3 for x in deltas)
+    keys, kept = [], []
+    for item in prep:
+        k = PREP_KEY.get(item.split(" — ")[0])
+        if k:
+            keys.append(k)
+        if k in REPEATABLE and k in said and not big_change:
+            continue
+        kept.append(item)
+    return Brief(headline=headline, rows=rows, prep=kept, keys=keys)
 
 
 def icon(day: Day, brief: Brief) -> str:
     txt = " ".join(v["txt"] for v in day.hourly.values())
-    if any(p.startswith("우산") for p in brief.prep):
+    if any(p.startswith(("우산", "출근길 비", "곧 비")) for p in brief.prep):
         return "☔️" if "눈" not in txt else "❄️"
     if "흐림" in txt or "구름많" in txt:
         return "⛅️"
@@ -269,7 +293,10 @@ def icon(day: Day, brief: Brief) -> str:
 
 
 def render(brief: Brief, home: Day, office: Day | None, today: date) -> str:
-    lines = [f"{icon(office or home, brief)} <b>{escape(brief.headline)}</b>"]
+    if not brief.headline and not brief.rows and not brief.prep:
+        raise RuntimeError("어제 비교·챙길 것이 모두 비어 있습니다(데이터 누락 의심) — 빈 메시지는 보내지 않습니다")
+    head = brief.headline or "오늘 날씨"
+    lines = [f"{icon(office or home, brief)} <b>{escape(head)}</b>"]
     lines += [escape(r) for r in brief.rows]
     if brief.prep:
         lines += ["", "<b>챙길 것</b>"] + [f"· {escape(p)}" for p in brief.prep]
@@ -284,7 +311,7 @@ def render(brief: Brief, home: Day, office: Day | None, today: date) -> str:
     return "\n".join(lines)
 
 
-def commute_radar(home_cfg: dict, workday: bool) -> str:
+def commute_radar(home_cfg: dict, workday: bool, today: date) -> str:
     """레이더로 본 앞으로 1시간 반 안의 비(출근·외출 준비 시간). 못 읽으면 빈 문자열."""
     if "lat" not in home_cfg:
         return ""
@@ -298,7 +325,12 @@ def commute_radar(home_cfg: dict, workday: bool) -> str:
         return ""
     if not ep:
         return ""
-    start, end, peak, _ = ep
+    start, end, peak, last_wet = ep
+    if os.getenv("DRY_RUN") not in ("1", "true", "TRUE"):
+        # 이 비는 아침 한 통이 알렸다 — 비 알림(rain_watch)이 같은 비로 또 보내지 않게
+        st = rain_watch.load_state(today)
+        st["wet_until"] = max(last_wet.isoformat(), st.get("wet_until", ""))
+        rain_watch.save_state(today, st)
     label = "출근길 비" if workday else "곧 비"
     when = "지금 오는 중" if start <= now + timedelta(minutes=5) else f"{start:%H:%M}부터"
     return f"{label} — {when}" + (f", {end:%H:%M}쯤 그침" if end else "") + f" (레이더, 최대 {peak:g}mm/h)"
@@ -339,11 +371,12 @@ def run(slot: str | None, force: bool = False) -> int:
 
     brief = build(home, office, workday, load_snapshot("home", yday),
                   load_snapshot("office", yday) if office else {})
-    radar_line = commute_radar(cfg["home"], workday)
+    radar_line = commute_radar(cfg["home"], workday, today)
     if radar_line:
+        brief.prep = [p for p in brief.prep if not p.startswith("접는 우산")]
         brief.prep.insert(0, radar_line)
     text = render(brief, home, office, today)
-    save_snapshot("home", today, home)
+    save_snapshot("home", today, home, brief.keys)
     if oc.get("code"):
         o_today = office or (parse(fetch_raw(oc["code"]), today, oc.get("name", "회사"))
                              if oc["code"] != cfg["home"]["code"] else home)
