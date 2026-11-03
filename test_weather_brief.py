@@ -66,6 +66,31 @@ def test_rain_episode_and_message():
     assert "지금부터 비가 와요" in rw.message(s, e, peak, datetime(2026, 11, 4, 15, 5), "집")
 
 
+def test_radar_episode_and_dedupe():
+    from datetime import datetime, timedelta, timezone
+    import rain_watch as rw
+    kst = timezone(timedelta(hours=9))
+    t0 = datetime(2026, 11, 4, 14, 0, tzinfo=kst)
+    series = [(t0 + timedelta(minutes=10 * i), v) for i, v in enumerate([0, 0, 0.3, 1.0, 4.0, 2.0, 0.2, 0])]
+    start, end, peak, last = rw.radar_episode(series)
+    assert (start.minute, end.minute, peak, last.minute) == (30, 0, 4.0, 50)
+    msg = rw.radar_message(start, end, peak, t0 + timedelta(minutes=2), "성수동")
+    assert "14:30쯤(28분 뒤) 비가 시작돼요" in msg and "15:00쯤 그칠" in msg and "강한 비" in msg, msg
+    assert rw.is_new_rain(start, {})
+    assert not rw.is_new_rain(start, {"wet_until": (t0 + timedelta(minutes=20)).isoformat()})
+    assert rw.is_new_rain(start + timedelta(hours=2), {"wet_until": last.isoformat()})
+    assert rw.radar_episode([(t0, 0.2), (t0, 0.0)]) is None
+
+
+def test_radar_pixel_and_colors():
+    import radar
+    x, y = radar.pixel(37.553164, 127.033436, 1197, 1253)   # 응봉동
+    assert 0 < x < 1197 and 0 < y < 1253
+    assert radar.color_value((15, 59, 235, 255)) == 0.5
+    assert radar.color_value((15, 59, 235, 0)) == 0.0
+    assert radar.color_value((200, 200, 200, 255)) == 0.0     # 색상표와 먼 색
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

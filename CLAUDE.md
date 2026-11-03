@@ -28,8 +28,8 @@ Obsidian의 다니엘프로젝트 기록을 연결한다.
   테스트 `./venv/bin/python test_again.py`(임시 볼트·상태만 사용).
 - `weather_brief.py`: 치프봇 아침 날씨 한 통(네이버 날씨, 어제 대비 체감·챙길 것, LLM 없음). 지역 `~/.config/jay-weather.json`,
   지역 코드 찾기 `weather_brief.py find 동이름`, 테스트 `./venv/bin/python test_weather_brief.py`.
-- `rain_watch.py`: 비 오기 전 알림(07~21시 10분마다, 2시간 안에 시작하는 비를 한 번만). 지금은 네이버 시간대별 예보(앞 6시간=기상청 초단기예보),
-  기상청 API허브 키(`~/.config/kma.env`, Jay가 `kma-key`로 저장)가 생기면 레이더 초단기강수예측으로 바꾼다.
+- `rain_watch.py`: 비 오기 전 알림(07~21시 10분마다, 같은 비는 한 번만). 1순위 `radar.py`(네이버 지도 초단기강수예측 PNG를
+  좌표→픽셀→색상표로 mm/h 판독, 키 불필요), 실패 시 시간대별 예보. 아침 날씨 한 통의 '출근길 비'도 같은 레이더를 쓴다.
 - `evening_sync.py`: Todoist 완료 항목을 Obsidian Daily에 기록.
 - `regenerate_index.py`: Daily·결정로그·주간회고를 바탕으로 `_INDEX.md` 재생성.
 - `weekly_retro.py`: 주간 자료를 모아 회고 초안 생성.

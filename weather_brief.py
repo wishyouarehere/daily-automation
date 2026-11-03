@@ -284,6 +284,26 @@ def render(brief: Brief, home: Day, office: Day | None, today: date) -> str:
     return "\n".join(lines)
 
 
+def commute_radar(home_cfg: dict, workday: bool) -> str:
+    """레이더로 본 앞으로 1시간 반 안의 비(출근·외출 준비 시간). 못 읽으면 빈 문자열."""
+    if "lat" not in home_cfg:
+        return ""
+    try:
+        import radar
+        import rain_watch
+        now = jay_desk.now()
+        ep = rain_watch.radar_episode(radar.forecast({"h": (home_cfg["lat"], home_cfg["lng"])}, now)["h"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 레이더 실패: {e}", file=sys.stderr)
+        return ""
+    if not ep:
+        return ""
+    start, end, peak, _ = ep
+    label = "출근길 비" if workday else "곧 비"
+    when = "지금 오는 중" if start <= now + timedelta(minutes=5) else f"{start:%H:%M}부터"
+    return f"{label} — {when}" + (f", {end:%H:%M}쯤 그침" if end else "") + f" (레이더, 최대 {peak:g}mm/h)"
+
+
 # ── 실행 ────────────────────────────────────────────────────
 def load_config() -> dict:
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
@@ -319,6 +339,9 @@ def run(slot: str | None, force: bool = False) -> int:
 
     brief = build(home, office, workday, load_snapshot("home", yday),
                   load_snapshot("office", yday) if office else {})
+    radar_line = commute_radar(cfg["home"], workday)
+    if radar_line:
+        brief.prep.insert(0, radar_line)
     text = render(brief, home, office, today)
     save_snapshot("home", today, home)
     if oc.get("code"):

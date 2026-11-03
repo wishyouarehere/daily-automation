@@ -5,3 +5,4 @@ google-auth-oauthlib==1.2.0
 google-api-python-client==2.118.0
 pytz==2024.1
 anthropic>=0.40.0
+pillow
