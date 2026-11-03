@@ -60,7 +60,7 @@ def test_rain_episode_and_message():
     assert rw.episode(h, 12) is None                      # 3시간 뒤 비는 아직
     s, e, peak = rw.episode(h, 14)
     assert (s, e) == (15, 16)
-    msg = rw.message(s, e, peak, datetime(2026, 11, 4, 14, 30), "성수동")
+    msg = rw.message(s, e, peak, datetime(2026, 11, 4, 14, 30), "회사")
     assert "15시쯤(30분 뒤) 비가 시작돼요" in msg and "17시까지" in msg, msg
     s, e, peak = rw.episode(h, 15)
     assert "지금부터 비가 와요" in rw.message(s, e, peak, datetime(2026, 11, 4, 15, 5), "집")
@@ -74,7 +74,7 @@ def test_radar_episode_and_dedupe():
     series = [(t0 + timedelta(minutes=10 * i), v) for i, v in enumerate([0, 0, 0.3, 1.0, 4.0, 2.0, 0.2, 0])]
     start, end, peak, last = rw.radar_episode(series)
     assert (start.minute, end.minute, peak, last.minute) == (30, 0, 4.0, 50)
-    msg = rw.radar_message(start, end, peak, t0 + timedelta(minutes=2), "성수동")
+    msg = rw.radar_message(start, end, peak, t0 + timedelta(minutes=2), "회사")
     assert "14:30쯤(28분 뒤) 비가 시작돼요" in msg and "15:00쯤 그칠" in msg and "강한 비" in msg, msg
     assert rw.is_new_rain(start, {})
     assert not rw.is_new_rain(start, {"wet_until": (t0 + timedelta(minutes=20)).isoformat()})
@@ -84,7 +84,7 @@ def test_radar_episode_and_dedupe():
 
 def test_radar_pixel_and_colors():
     import radar
-    x, y = radar.pixel(37.553164, 127.033436, 1197, 1253)   # 응봉동
+    x, y = radar.pixel(37.5665, 126.9780, 1197, 1253)   # 서울시청
     assert 0 < x < 1197 and 0 < y < 1253
     assert radar.color_value((15, 59, 235, 255)) == 0.5
     assert radar.color_value((15, 59, 235, 0)) == 0.0
