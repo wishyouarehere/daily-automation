@@ -51,12 +51,16 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         problems.append(f"레이더 초단기강수예측 점검 실패: {e}")
 
+    warnings: list[str] = []
     if "lat" in cfg["home"]:
         try:
             wb.open_meteo_day(cfg["home"]["lat"], cfg["home"]["lng"], today, "집")
         except Exception as e:  # noqa: BLE001
-            problems.append(f"대체 소스 Open-Meteo 실패: {e}")
+            # 대체 소스의 외부 장애는 우리가 고칠 수 없다 — 주 소스(네이버·레이더)가 멀쩡하면 경고만 남기고 실패로 세지 않는다
+            warnings.append(f"대체 소스 Open-Meteo 일시 불가: {e}")
 
+    for w in warnings:
+        print(f"[warn] {w}")
     if problems:
         for p in problems:
             print(f"[fail] {p}")
