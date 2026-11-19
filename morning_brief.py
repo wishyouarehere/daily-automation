@@ -17,6 +17,7 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 
+import brief_filter as BF
 import desk_sources as S
 import jay_desk as J
 
@@ -109,7 +110,10 @@ def build(today: date) -> tuple[str, dict]:
     data = J.ask_json(_prompt(today, weekend, cands, material), job="jay_desk_morning")
     quote = J.pick_quote(cands, data.get("quote_id"))
     focus = data.get("focus") if isinstance(data.get("focus"), dict) and not weekend else None
-    question = J.clean(data.get("question"))
+    if focus:  # 미결·기록없음 문장은 보내지 않는다 — 머리말이 걸리면 칸째 뺀다
+        head = BF.drop_unsettled(focus.get("headline"))
+        focus = {**focus, "headline": head, "line": BF.drop_unsettled(focus.get("line"))} if head else None
+    question = J.clean(BF.drop_unsettled(data.get("question")))
 
     parts = [f"🌅 <b>{J.date_label(today)}</b>"]
     cond = J.condition_line()
@@ -147,6 +151,7 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"ERROR 아침 메시지 조립 실패: {e}", file=sys.stderr)
         return 1
+    BF.archive_sent("morning", msg, meta, dry=os.getenv("DRY_RUN") in ("1", "true", "TRUE"))
     mid = J.send_telegram(msg)
     if meta.get("quote"):
         J.record_message(mid, "quote", meta["quote"], meta.get("section", ""))

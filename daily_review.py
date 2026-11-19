@@ -14,6 +14,7 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 
+import brief_filter as BF
 import desk_sources as S
 import jay_desk as J
 
@@ -50,7 +51,7 @@ decided: 오늘 정해진 것을 회의별로 묶는다. 회의 0~3개, 회의�
   - 오늘 회의록의 '확정 결정'에 적힌 것만. 핵심 요약·미결·제안·요청은 넣지 않는다.
   - 무게 있는 것(돈·사람·일정·제품 방향)부터. 비슷한 결정은 한 줄로 합친다. 사소한 운영 결정은 버린다.
 tomorrow: [내일 일정]의 번호 i에 붙일 맥락 한 줄 note(~55자). 0~3개.
-  - 지난 회의록에 그 미팅과 직접 이어지는 결정·약속·미결이 있을 때만. 없으면 그 일정은 넣지 않는다.
+  - 아래 [내일 일정과 같은 제목의 지난 회의록]에 번호 i로 붙은 기록에서 확정된 것만. 그 번호에 기록이 없으면 그 일정은 넣지 않는다. 다른 회의 기록을 근거로 쓰지 않는다.
   - decided에 이미 쓴 내용은 반복하지 않는다. 오늘 회의 말고 그 전 회의에서 이어지는 게 있을 때만.
   - 지난 회의에서 정해진 것만 짚는다. "기록 없음", "미정", "아직 안 됨" 같은 밀린 일·빈칸은 쓰지 않는다.
   - 예: "10/6에 다음 스프린트부터 에픽 단위로 플래닝하기로 했어요"
@@ -73,13 +74,16 @@ underline_text: 고른 밑줄 원문 안에서 완결된 문장 1~2개만 연속
 [내일 일정] ({tomorrow.isoformat()} {J.WEEKDAY_KR[tomorrow.weekday()]})
 {_numbered(material.get('tomorrow') or [])}
 
+[내일 일정과 같은 제목의 지난 회의록]
+{material.get('tomorrow_notes') or '없음'}
+
 [오늘 일정]
 {material.get('calendar') or '없음'}
 
 [오늘 회의록]
 {material.get('meetings') or '없음'}
 
-[지난 10일 회의록 — 미결 반복·내일 맥락 확인용]
+[지난 10일 회의록 — 오늘 정해진 것 확인용(내일 일정 맥락의 근거로 쓰지 않는다)]
 {material.get('recent') or '없음'}
 
 [오늘 WorkFlowy 데일리]
@@ -112,6 +116,14 @@ def build(today: date) -> tuple[str, dict]:
                 "tomorrow": tomorrow_lines, "next_day": tomorrow}
     if tomorrow_lines:
         material["recent"] = S.meetings(days=10, total_cap=14000)
+        # 내일 일정 맥락은 '같은 제목' 기록에서만(코드 매칭). 없는 일정 번호는 노트를 못 단다.
+        matched = {}
+        for i, l in enumerate(tomorrow_lines):
+            body = BF.same_title_notes(l, S.PROJECT / "회의록", today)
+            if body:
+                matched[i] = body
+        material["matched_idx"] = set(matched)
+        material["tomorrow_notes"] = "\n\n".join(f"[{i}] {tomorrow_lines[i]}\n{b}" for i, b in matched.items())
     if not weekend:
         start = datetime(today.year, today.month, today.day, tzinfo=J.KST)
         material |= {
@@ -134,7 +146,8 @@ def build(today: date) -> tuple[str, dict]:
         for g in groups:
             if not isinstance(g, dict) or left <= 0:
                 continue
-            items = [_polite(J.clean(S.normalize_terms(x))) for x in (g.get("items") or []) if str(x).strip()][:min(2, left)]
+            items = [_polite(J.clean(S.normalize_terms(BF.drop_unsettled(x)))) for x in (g.get("items") or [])
+                     if BF.drop_unsettled(x)][:min(2, left)]
             if items:
                 decided.append((J.clean(S.normalize_terms(g.get("meeting") or "")), items))
                 left -= len(items)
@@ -144,8 +157,9 @@ def build(today: date) -> tuple[str, dict]:
             i = int(t.get("i"))
         except Exception:  # noqa: BLE001
             continue
-        if 0 <= i < len(tomorrow_lines) and str(t.get("note") or "").strip():
-            notes[i] = J.clean(S.normalize_terms(t["note"]))
+        note = BF.drop_unsettled(t.get("note"))
+        if 0 <= i < len(tomorrow_lines) and note and i in material.get("matched_idx", set()):
+            notes[i] = J.clean(S.normalize_terms(note))
 
     parts = [f"🌙 <b>{J.date_label(today)} · 오늘 정리</b>"]
     if decided:
@@ -210,6 +224,7 @@ def main() -> int:
         print(f"ERROR 저녁 메시지 조립 실패: {e}", file=sys.stderr)
         return 1
     q, cand = meta.pop("quote"), meta.pop("candidate")
+    BF.archive_sent("evening", msg, meta, dry=os.getenv("DRY_RUN") in ("1", "true", "TRUE"))
     mid = J.send_telegram(msg)
     if q:
         J.record_message(mid, "quote", q["text"], q["section"])
