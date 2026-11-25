@@ -113,6 +113,17 @@ def value_at(img: Image.Image, lat: float, lng: float) -> float:
     return max(vals, default=0.0)
 
 
+def frame_image(name: str, tries: int = 2) -> Image.Image | None:
+    """프레임 이미지 한 장. 막 발표된 회차는 목록에 먼저 뜨고 이미지가 늦게 올라와
+    200인데 이미지가 아닌 응답이 올 때가 있다 — 한 번 더 받아 보고, 그래도 아니면 None(건너뜀)."""
+    for _ in range(tries):
+        try:
+            return Image.open(io.BytesIO(http_get(IMG_URL + name, timeout=15).content)).convert("RGBA")
+        except (OSError, ValueError):   # PIL.UnidentifiedImageError는 OSError
+            continue
+    return None
+
+
 def latest_frames() -> list[dict]:
     """최신 발표 회차의 프레임들(시각 오름차순)."""
     q = json.dumps({"visualMapSrmImage": {"photoType": "maple", "limit": 24}})
@@ -136,16 +147,22 @@ def forecast(points: dict[str, tuple[float, float]], now: datetime) -> dict[str,
     if (now - issued).total_seconds() > MAX_STALE_MIN * 60:
         raise RadarUnavailable(f"레이더 최신 발표가 {issued:%H:%M}로 멈춤")
     checked = False
+    bad = 0
     for f in frames:
         t = datetime.strptime(f["photoYmdt"], "%Y%m%d%H%M").replace(tzinfo=now.tzinfo)
         if (now - t).total_seconds() > 600:
             continue
-        img = Image.open(io.BytesIO(http_get(IMG_URL + f["photoNm"], timeout=15).content)).convert("RGBA")
+        img = frame_image(f["photoNm"])
+        if img is None:
+            bad += 1
+            continue
         if not checked:
             check_image(img)
             checked = True
         for k, (lat, lng) in points.items():
             out[k].append((t, value_at(img, lat, lng)))
+    if bad and not checked:
+        raise RadarUnavailable(f"레이더 이미지 {bad}장이 모두 이미지가 아닌 응답")
     return out
 
 
@@ -159,6 +176,8 @@ def observed(point: tuple[float, float], t0: datetime, t1: datetime, tz) -> list
         t = datetime.strptime(f["photoYmdt"], "%Y%m%d%H%M").replace(tzinfo=tz)
         if not t0 <= t <= t1:
             continue
-        img = Image.open(io.BytesIO(http_get(IMG_URL + f["photoNm"], timeout=15).content)).convert("RGBA")
+        img = frame_image(f["photoNm"])
+        if img is None:
+            continue
         out.append((t, value_at(img, *point)))
     return sorted(out)
