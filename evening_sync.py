@@ -51,8 +51,11 @@ def send_telegram(text: str) -> None:
     requests.post(url, json={"chat_id": OPS_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
 
 
+_HUMAN = {"Todoist 완료 항목 조회": "Todoist를 읽지 못해 오늘 기록을 못 남겼어요."}
+
+
 def send_error(context: str, error: Exception) -> None:
-    msg = f"<b>멈춤 · 저녁 기록</b>\n\n{context}에서 오류가 났어요.\n<code>{type(error).__name__}: {error}</code>"
+    msg = f"<b>멈춤 · 저녁 기록</b>\n\n{_HUMAN.get(context, '저녁 기록 중 문제가 생겼어요.')}"
     try:
         send_telegram(msg)
     except Exception:

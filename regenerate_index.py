@@ -92,12 +92,17 @@ def send_telegram(text: str) -> None:
         print(f"WARN: 텔레그램 전송 실패: {type(e).__name__}", file=sys.stderr)
 
 
+_HUMAN = {"대상 _INDEX 없음": "현황판 파일을 못 찾았어요.", "입력 빔": "어제 기록을 못 읽었어요.",
+          "LLM 호출": "글을 만드는 단계에서 실패했어요.", "출력 검증 실패": "만든 글이 기준에 못 미쳐 쓰지 않았어요.",
+          "_INDEX 쓰기": "파일에 저장하지 못했어요."}
+
+
 def fail(context: str, detail: str = "") -> None:
     """이전 _INDEX 보존하고 종료. 비밀값 노출 금지."""
     print(f"ERROR [{context}] {detail}", file=sys.stderr)
     send_telegram(
-        f"<b>멈춤 · _INDEX 재생성</b>\n\n{context}에서 실패했어요.\n"
-        f"이전 _INDEX는 그대로 남아 있어요."
+        f"<b>멈춤 · 아침 현황판 만들기</b>\n\n{_HUMAN.get(context, '만드는 중 문제가 생겼어요.')}\n"
+        f"이전 현황판은 그대로 남아 있어요."
     )
     sys.exit(1)
 
@@ -378,7 +383,7 @@ def main():
 
     # 변경 요약 알림 (Jay 검수용)
     send_telegram(
-        f"<b>_INDEX 재생성 · {today_label}</b>\n\n"
+        f"<b>아침 현황판 갱신 · {today_label}</b>\n\n"
         f"{diff}"
     )
     try:

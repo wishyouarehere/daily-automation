@@ -474,7 +474,8 @@ def run(slot: str | None, force: bool = False) -> int:
     except Exception as e:  # noqa: BLE001
         last_try = (now + timedelta(minutes=10)).replace(second=0) > now.replace(hour=DEADLINE[0], minute=DEADLINE[1])
         if last_try:
-            warn_ops(f"오늘 아침 날씨를 못 보냈어요(weather_brief, {now:%H:%M}까지 재시도)\n{e}")
+            print(f"[error] 아침 날씨 발송 실패: {e}", file=sys.stderr)
+            warn_ops(f"오늘 아침 날씨를 못 보냈어요. {now:%H:%M}까지 다시 시도했어요.")
         raise   # 종료코드 1 → cron-status → 04:40 자동 수리 대상
 
 

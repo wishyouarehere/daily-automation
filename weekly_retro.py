@@ -81,9 +81,13 @@ def send_telegram(text: str) -> None:
         print(f"WARN: 텔레그램 전송 실패: {type(e).__name__}", file=sys.stderr)
 
 
+_HUMAN = {"입력 빔": "이번 주 기록을 못 읽었어요.", "LLM 호출": "초안을 만드는 단계에서 실패했어요.",
+          "출력 검증 실패": "만든 초안이 기준에 못 미쳐 저장하지 않았어요.", "파일 쓰기": "파일에 저장하지 못했어요."}
+
+
 def fail(context: str, detail: str = "") -> None:
     print(f"ERROR [{context}] {detail}", file=sys.stderr)
-    send_telegram(f"<b>멈춤 · 주간회고 초안</b>\n\n{context}")
+    send_telegram(f"<b>멈춤 · 주간회고 초안</b>\n\n{_HUMAN.get(context, '만드는 중 문제가 생겼어요.')}")
     sys.exit(1)
 
 
