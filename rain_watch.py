@@ -117,8 +117,8 @@ def radar_message(start: datetime, end: datetime | None, peak: float, now: datet
         tail = f"{later_hour + 1}시까지 이어질 것 같아요"
     else:
         tail = "한동안 이어질 것 같아요"
-    return "\n".join([f"☔️ <b>{escape(head)}</b>", f"{escape(tail)} · {escape(place)}",
-                      f"<i>{'눈' if snow else strength(peak)} · 최대 시간당 {peak:g}mm · 레이더</i>"])
+    return "\n".join([f"<b>{escape(head)}</b>", "", f"{escape(tail)}",
+                      f"{escape(place)} · {'눈' if snow else strength(peak)} · 시간당 최대 {peak:g}mm"])
 
 
 def message(start: int, end: int, peak: dict, now: datetime, place: str) -> str:
@@ -129,14 +129,14 @@ def message(start: int, end: int, peak: dict, now: datetime, place: str) -> str:
     else:
         mins = (start - now.hour) * 60 - now.minute
         when = f"{start}시쯤({mins}분 뒤) {kind}{'가' if kind == '비' else '이'} 시작돼요"
-    lines = [f"☔️ <b>{escape(when)}</b>", f"{end + 1}시까지 이어질 것 같아요 · {escape(place)}"]
+    lines = [f"<b>{escape(when)}</b>", "", f"{end + 1}시까지 이어질 것 같아요", escape(place)]
     detail = []
     if peak["amt"] > 0:
         detail.append(f"시간당 {peak['amt']:g}mm")
     if peak["rain"]:
         detail.append(f"확률 {peak['rain']:.0f}%")
     if detail:
-        lines.append(f"<i>{escape(' · '.join(detail))}</i>")
+        lines[-1] += " · " + escape(" · ".join(detail))
     return "\n".join(lines)
 
 

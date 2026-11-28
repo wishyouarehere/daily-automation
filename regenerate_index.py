@@ -96,8 +96,8 @@ def fail(context: str, detail: str = "") -> None:
     """이전 _INDEX 보존하고 종료. 비밀값 노출 금지."""
     print(f"ERROR [{context}] {detail}", file=sys.stderr)
     send_telegram(
-        f"⚠️ <b>[_INDEX 재생성 실패]</b>\n{context}\n"
-        f"이전 _INDEX 를 그대로 보존했습니다."
+        f"<b>멈춤 · _INDEX 재생성</b>\n\n{context}에서 실패했어요.\n"
+        f"이전 _INDEX는 그대로 남아 있어요."
     )
     sys.exit(1)
 
@@ -378,9 +378,8 @@ def main():
 
     # 변경 요약 알림 (Jay 검수용)
     send_telegram(
-        f"🔄 <b>_INDEX 재생성 — {today_label}</b>\n"
-        f"{diff}\n\n"
-        f"<i>아침에 _INDEX 열어 확인 / 롤백: _INDEX.md.bak</i>"
+        f"<b>_INDEX 재생성 · {today_label}</b>\n\n"
+        f"{diff}"
     )
     try:
         from exec_emitter import emit_event

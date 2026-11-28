@@ -52,7 +52,7 @@ def send_telegram(text: str) -> None:
 
 
 def send_error(context: str, error: Exception) -> None:
-    msg = f"⚠️ <b>[evening_sync 오류]</b>\n{context}\n<code>{type(error).__name__}: {error}</code>"
+    msg = f"<b>멈춤 · 저녁 기록</b>\n\n{context}에서 오류가 났어요.\n<code>{type(error).__name__}: {error}</code>"
     try:
         send_telegram(msg)
     except Exception:
@@ -185,9 +185,8 @@ def main():
             _emitted = False
         if not exec_gate_suppresses(_emitted):
             send_telegram(
-                f"❌ <b>저녁 기록 실패 — {date_str}</b>\n"
-                "Todoist 조회에 실패해 Obsidian에 기록하지 않았습니다.\n"
-                "복구하려면 직접 실행: <code>python evening_sync.py</code>"
+                f"<b>멈춤 · 저녁 기록 {date_str}</b>\n\n"
+                "Todoist를 못 읽어서 기록하지 못했어요."
             )
         sys.exit(1)
 

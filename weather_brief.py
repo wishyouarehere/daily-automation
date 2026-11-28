@@ -396,10 +396,10 @@ def render(brief: Brief, home: Day, office: Day | None, today: date) -> str:
     if not brief.headline and not brief.rows and not brief.prep:
         raise RuntimeError("어제 비교·챙길 것이 모두 비어 있습니다(데이터 누락 의심) — 빈 메시지는 보내지 않습니다")
     head = brief.headline or "오늘 날씨"
-    lines = [f"{icon(office or home, brief)} <b>{escape(head)}</b>"]
+    lines = [f"<b>{escape(head)}</b>", ""]
     lines += [escape(r) for r in brief.rows]
     if brief.prep:
-        lines += ["", "<b>챙길 것</b>"] + [f"· {escape(p)}" for p in brief.prep]
+        lines += ["", "<b>챙길 것</b>"] + [escape(p) for p in brief.prep]
     span = []
     for d in ([home, office] if office else [home]):
         if d.tmin is not None and d.tmax is not None:
@@ -498,7 +498,7 @@ def _send(today: date, workday: bool, dry: bool) -> int:
         brief.prep.insert(0, radar_line)
     text = render(brief, home, office, today)
     if fb_home or fb_office:
-        text += "\n<i>네이버 날씨가 안 열려 대체 예보로 보냈어요</i>"
+        text += "\n\n<i>대체 예보로 보냈어요.</i>"
     save_snapshot("home", today, home, brief.keys)
     if office is not None:
         save_snapshot("office", today, office)

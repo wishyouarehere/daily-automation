@@ -161,7 +161,7 @@ def build(today: date) -> tuple[str, dict]:
         if 0 <= i < len(tomorrow_lines) and note and i in material.get("matched_idx", set()):
             notes[i] = J.clean(S.normalize_terms(note))
 
-    parts = [f"🌙 <b>{J.date_label(today)} · 오늘 정리</b>"]
+    parts = [f"<b>{J.date_label(today)} · 오늘 정리</b>"]
     if decided:
         rows = []
         for meeting, items in decided:
@@ -174,7 +174,7 @@ def build(today: date) -> tuple[str, dict]:
         for i, l in enumerate(tomorrow_lines):
             rows.append(J.clean(l))
             if i in notes:
-                rows.append(f"   ↳ {notes[i]}")
+                rows.append(f"  {notes[i]}")
         head = "내일" if tomorrow == today + timedelta(days=1) else "다음 근무일"
         parts.append(f"<b>{head} {J.date_label(tomorrow)}</b>\n" + "\n".join(rows))
     if quote:

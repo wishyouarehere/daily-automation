@@ -40,7 +40,7 @@ def _prompt(today: date, weekend: bool, cands: list[dict], material: dict) -> st
 
 quote_id: 아래 [문장 후보] 중 오늘 Jay에게 가장 맞는 문장의 id 하나. 오늘 일정·어제 흐름과 닿는 문장을 고른다.
   딱 맞는 게 없으면 담백하게 하루를 여는 문장을 고른다.
-question: 오늘 하루를 시작하며 스스로에게 던질 질문 하나(~50자). 할 일 목록이 아니라 태도·관점·마음에 대한 질문.
+question: 오늘 하루를 시작하며 스스로에게 던질 질문 하나(~35자, 한 줄에 끝나게). 할 일 목록이 아니라 태도·관점·마음에 대한 질문.
   가능하면 오늘의 구체적 일정이나 고른 문장과 연결한다. 예: "15시 자리에 어떤 태도로 앉고 싶어요?"
 """
     if weekend:
@@ -54,8 +54,8 @@ question: 오늘 하루를 시작하며 스스로에게 던질 질문 하나(~50
 """
     return head + f"""focus: 오늘 짚을 것 최대 1건. 아래 재료에 명시된 근거가 있을 때만. 없거나 애매하면 null.
   - 오늘 날짜에 걸린 결정·마감·회의 준비처럼 오늘 행동이 달라지는 것만. 진행 보고·FYI는 버린다.
-  - headline: 무엇인지 명사구(~20자).
-  - line: 사실 한 줄 + 필요하면 부드러운 제안 한 마디(~60자). 짐작·가능성 서술 금지.
+  - headline: 무엇인지 명사구(~20자). 화면에 굵게 첫 줄로 나온다.
+  - line: 사실 한 줄(~28자씩 최대 2줄, 줄바꿈 \\n). 제안은 꼭 필요할 때만 한 마디. 짐작·가능성 서술 금지.
   - source: 근거 출처를 구체적으로(예: "9/22 리더 주간 회의록", "Slack #tech-dev 9/22", "결정 노트 8/27").
   - [야간참모 결정 후보]는 Slack·Notion을 읽고 새벽에 만든 후보다. 다른 재료와 맞으면 쓰고, 근거가 약하면 버린다.
 
@@ -115,23 +115,25 @@ def build(today: date) -> tuple[str, dict]:
         focus = {**focus, "headline": head, "line": BF.drop_unsettled(focus.get("line"))} if head else None
     question = J.clean(BF.drop_unsettled(data.get("question")))
 
-    parts = [f"🌅 <b>{J.date_label(today)}</b>"]
+    parts = [f"<b>{J.date_label(today)}</b>"]
     cond = J.condition_line()
     if cond and not weekend:
         parts[0] += f"\n{J.clean(cond)}"
     if quote:
         parts.append(J.render_quote(quote))
     if not weekend:
-        sched = "\n".join(f"  {J.clean(l)}" for l in cal) if cal else "  일정 없음"
-        parts.append(f"<b>오늘</b>\n{sched}")
+        if cal:
+            parts.append("<b>오늘 일정</b>\n" + "\n".join(J.clean(l) for l in cal))
+        else:
+            parts.append("<b>오늘 일정</b>\n없어요.")
         if focus and focus.get("headline") and focus.get("source"):
-            body = f"<b>오늘 짚을 것</b>\n{J.clean(focus['headline'])}"
+            body = f"<b>{J.clean(focus['headline'])}</b>"
             if focus.get("line"):
                 body += f"\n{J.clean(focus['line'])}"
-            body += f"\n<i>근거: {J.clean(focus['source'])}</i>"
+            body += f"\n<i>{J.clean(focus['source'])}</i>"
             parts.append(body)
     if question:
-        parts.append(f"<b>오늘의 질문</b>\n{question}")
+        parts.append(question)
     otd = S.career_on_this_day()
     if otd:
         head, _, rest = otd.partition("\n")

@@ -83,7 +83,7 @@ def send_telegram(text: str) -> None:
 
 def fail(context: str, detail: str = "") -> None:
     print(f"ERROR [{context}] {detail}", file=sys.stderr)
-    send_telegram(f"⚠️ <b>[주간회고 초안 실패]</b>\n{context}")
+    send_telegram(f"<b>멈춤 · 주간회고 초안</b>\n\n{context}")
     sys.exit(1)
 
 
@@ -587,12 +587,12 @@ def main():
 
     patch_note = ""
     if patched:
-        patch_note = (f"\n⚠️ <b>{'·'.join(patched)} 섹션이 잘려 자동 보정됨</b> — "
-                      f"{'④ 차주 계획을 직접 채워주세요.' if '④' in patched else '확인 요망.'}")
+        patch_note = (f"\n\n{'·'.join(patched)} 섹션이 잘려서 자동으로 보정했어요."
+                      f"{' ④ 차주 계획은 직접 채워 주세요.' if '④' in patched else ''}")
 
     sweep_note = ""
     if superseded:
-        sweep_note = f"\n🧹 이전 브릿지 회고 {len(superseded)}건 삭제: {', '.join(superseded)}"
+        sweep_note = f"\n이전 브릿지 회고 {len(superseded)}건을 지웠어요."
 
     print(f"✅ 주간회고 초안 생성: {fname} (Slack: {slack_state})"
           + (f" [보정: {'·'.join(patched)}]" if patched else "")
@@ -617,10 +617,9 @@ def main():
         _emitted = False
     if not exec_gate_suppresses(_emitted):
         send_telegram(
-            f"📝 <b>주간회고 초안 — {week_label}</b>\n"
-            f"Slack: {slack_state} · Docs: {docs_state}\n"
-            f"볼트에 저장됨: <code>{fname}</code>{patch_note}{sweep_note}\n\n"
-            f"<i>③ 블라인드스팟 직접 채우고, 파일명에서 '-draft' 떼면 확정.</i>"
+            f"<b>주간회고 초안 · {week_label}</b>\n\n"
+            f"볼트에 저장했어요.\n"
+            f"블라인드스팟을 채우고 파일명에서 '-draft'를 떼면 확정돼요.{patch_note}{sweep_note}"
         )
 
 
